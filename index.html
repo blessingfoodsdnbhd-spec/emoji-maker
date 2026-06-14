@@ -112,6 +112,13 @@
         </select>
       </div>
       <div class="grid-row">
+        <label>切分方式</label>
+        <select id="splitMode">
+          <option value="smart" selected>智能检测边界 (推荐)</option>
+          <option value="equal">等分网格</option>
+        </select>
+      </div>
+      <div class="grid-row" id="marginRow">
         <label>边缘留白</label>
         <input type="range" id="marginSlider" min="0" max="20" value="2" step="1">
         <span class="value" id="marginValue">2%</span>
@@ -196,7 +203,86 @@ const marginValue=document.getElementById('marginValue');
 const splitBtn=document.getElementById('splitBtn');
 const splitHint=document.getElementById('splitHint');
 const frameCountSelect=document.getElementById('frameCountSelect');
+const splitMode=document.getElementById('splitMode');
+const marginRow=document.getElementById('marginRow');
 const BG_COLORS={white:'#fff',pink:'#fce7f3',cream:'#fef3c7',black:'#000'};
+
+// --- Smart grid-boundary detection ---
+// Equal-split cut bodies off because AI grids aren't perfectly even. Instead we
+// project pixel "darkness" onto the X and Y axes, find the near-white gap bands
+// between emojis, then take a tight content bbox per cell and square it up
+// (content-centered, clamped to image) so the downstream cover-crop never amputates.
+function getScaledData(bitmap,maxW){
+  let w=bitmap.width,h=bitmap.height,scale=1;
+  if(w>maxW){scale=maxW/w;w=Math.round(w*scale);h=Math.round(h*scale)}
+  const c=document.createElement('canvas');c.width=w;c.height=h;
+  const ctx=c.getContext('2d');ctx.drawImage(bitmap,0,0,w,h);
+  return {data:ctx.getImageData(0,0,w,h).data,w,h,scale};
+}
+function findContentRanges(darkness,threshold){
+  const ranges=[];let inRange=false,start=0;
+  for(let i=0;i<darkness.length;i++){
+    const isContent=darkness[i]>threshold;
+    if(isContent&&!inRange){inRange=true;start=i}
+    else if(!isContent&&inRange){inRange=false;ranges.push({start,end:i})}
+  }
+  if(inRange)ranges.push({start,end:darkness.length});
+  return ranges;
+}
+function pickNRanges(ranges,n,total){
+  if(ranges.length===0){
+    const out=[];const step=total/n;
+    for(let i=0;i<n;i++)out.push({start:Math.floor(i*step),end:Math.floor((i+1)*step)});
+    return out;
+  }
+  if(ranges.length===n)return ranges;
+  const r=ranges.map(x=>({...x}));
+  if(r.length>n){
+    while(r.length>n){ // merge across the smallest gap
+      let minGap=Infinity,minIdx=0;
+      for(let i=0;i<r.length-1;i++){const gap=r[i+1].start-r[i].end;if(gap<minGap){minGap=gap;minIdx=i}}
+      r[minIdx]={start:r[minIdx].start,end:r[minIdx+1].end};r.splice(minIdx+1,1);
+    }
+    return r;
+  }
+  while(r.length<n){ // split the largest range in half
+    let maxSize=0,maxIdx=0;
+    for(let i=0;i<r.length;i++){const sz=r[i].end-r[i].start;if(sz>maxSize){maxSize=sz;maxIdx=i}}
+    const old=r[maxIdx],mid=Math.floor((old.start+old.end)/2);
+    r[maxIdx]={start:old.start,end:mid};r.splice(maxIdx+1,0,{start:mid,end:old.end});
+  }
+  return r;
+}
+function tightenBBox(data,imgW,imgH,x0,y0,bw,bh){
+  let minX=imgW,minY=imgH,maxX=-1,maxY=-1,has=false;
+  const xEnd=Math.min(x0+bw,imgW),yEnd=Math.min(y0+bh,imgH);
+  for(let y=y0;y<yEnd;y++){let i=(y*imgW+x0)*4;for(let x=x0;x<xEnd;x++){const r=data[i],g=data[i+1],b=data[i+2];if(r<240||g<240||b<240){has=true;if(x<minX)minX=x;if(x>maxX)maxX=x;if(y<minY)minY=y;if(y>maxY)maxY=y}i+=4}}
+  if(!has)return{x:x0,y:y0,w:bw,h:bh};
+  const padX=(maxX-minX)*0.06,padY=(maxY-minY)*0.06;
+  const x=Math.max(0,Math.floor(minX-padX)),y=Math.max(0,Math.floor(minY-padY));
+  const xe=Math.min(imgW,Math.ceil(maxX+1+padX)),ye=Math.min(imgH,Math.ceil(maxY+1+padY));
+  return{x,y,w:xe-x,h:ye-y};
+}
+function squarify(box,imgW,imgH){
+  const s=Math.min(Math.max(box.w,box.h),imgW,imgH); // square side, can't exceed image
+  let nx=box.x-(s-box.w)/2,ny=box.y-(s-box.h)/2;
+  nx=Math.max(0,Math.min(nx,imgW-s));ny=Math.max(0,Math.min(ny,imgH-s));
+  return{x:Math.round(nx),y:Math.round(ny),w:Math.round(s),h:Math.round(s)};
+}
+function detectGridBoundaries(bitmap,cols,rows){
+  const {data,w,h,scale}=getScaledData(bitmap,800);
+  const rowDark=new Float32Array(h),colDark=new Float32Array(w);
+  for(let y=0;y<h;y++){let i=(y*w)*4;for(let x=0;x<w;x++){const r=data[i],g=data[i+1],b=data[i+2];if(r<240||g<240||b<240){rowDark[y]++;colDark[x]++}i+=4}}
+  const finalRows=pickNRanges(findContentRanges(rowDark,w*0.02),rows,h);
+  const finalCols=pickNRanges(findContentRanges(colDark,h*0.02),cols,w);
+  const cells=[];
+  for(const rR of finalRows)for(const cR of finalCols){ // row-major: matches numbered grids
+    const tight=tightenBBox(data,w,h,cR.start,rR.start,cR.end-cR.start,rR.end-rR.start);
+    const sq=squarify(tight,w,h);
+    cells.push({x:Math.round(sq.x/scale),y:Math.round(sq.y/scale),w:Math.round(sq.w/scale),h:Math.round(sq.h/scale)});
+  }
+  return cells;
+}
 
 // Grid layouts offered per frame count (cols x rows)
 const LAYOUTS={
@@ -311,37 +397,43 @@ gridLayout.addEventListener('change',updateSplitHint);
 frameCountSelect.addEventListener('change',()=>setFrameCount(parseInt(frameCountSelect.value)));
 marginSlider.addEventListener('input',()=>{marginValue.textContent=marginSlider.value+'%'});
 
+function equalCells(img,cols,rows,margin){
+  const cellW=img.width/cols,cellH=img.height/rows;
+  const mx=cellW*margin,my=cellH*margin;
+  const cells=[];
+  for(let r=0;r<rows;r++)for(let c=0;c<cols;c++){ // row-major
+    cells.push({x:c*cellW+mx,y:r*cellH+my,w:cellW-2*mx,h:cellH-2*my});
+  }
+  return cells;
+}
+
 splitBtn.addEventListener('click',async()=>{
   if(!compositeImage)return;
-  const margin=parseInt(marginSlider.value)/100;
   const [cols,rows]=resolveLayout();
   const img=compositeImage.bitmap;
-  const cellW=img.width/cols;
-  const cellH=img.height/rows;
-  const mx=cellW*margin;
-  const my=cellH*margin;
-
   splitBtn.disabled=true;
   status.className='status';status.textContent='切片中...';
+  // yield a frame so the status paints before the (sync) detection pass
+  await new Promise(r=>setTimeout(r,0));
+
+  let cells;
+  if(splitMode.value==='smart'){
+    cells=detectGridBoundaries(img,cols,rows);
+  }else{
+    cells=equalCells(img,cols,rows,parseInt(marginSlider.value)/100);
+  }
+
   for(let i=0;i<NUM_FRAMES;i++){frames[i]=null}
-  let idx=0;
-  outer:
-  for(let r=0;r<rows;r++){
-    for(let c=0;c<cols;c++){
-      if(idx>=NUM_FRAMES)break outer;  // row-major order matches numbered grids (1,2,3...)
-      const sx=c*cellW+mx;
-      const sy=r*cellH+my;
-      const sw=cellW-2*mx;
-      const sh=cellH-2*my;
-      const canvas=document.createElement('canvas');
-      canvas.width=sw;canvas.height=sh;
-      const ctx=canvas.getContext('2d');
-      ctx.drawImage(img,sx,sy,sw,sh,0,0,sw,sh);
-      const blob=await new Promise(res=>canvas.toBlob(res,'image/png'));
-      const bitmap=await createImageBitmap(blob);
-      frames[idx]={bitmap,url:URL.createObjectURL(blob)};
-      idx++;
-    }
+  const n=Math.min(cells.length,NUM_FRAMES);
+  for(let idx=0;idx<n;idx++){
+    const cell=cells[idx];
+    const canvas=document.createElement('canvas');
+    canvas.width=Math.max(1,Math.round(cell.w));canvas.height=Math.max(1,Math.round(cell.h));
+    const ctx=canvas.getContext('2d');
+    ctx.drawImage(img,cell.x,cell.y,cell.w,cell.h,0,0,canvas.width,canvas.height);
+    const blob=await new Promise(res=>canvas.toBlob(res,'image/png'));
+    const bitmap=await createImageBitmap(blob);
+    frames[idx]={bitmap,url:URL.createObjectURL(blob)};
   }
   splitBtn.disabled=false;
   // switch to individual mode to show the result
@@ -349,8 +441,13 @@ splitBtn.addEventListener('click',async()=>{
   rebuildGrid();
   updateBtnState();
   status.className='status success';
-  status.textContent=`✓ 切成 ${idx} 帧, 已切换到 [分别上传] tab 查看效果, 下方可直接生成`;
+  const how=splitMode.value==='smart'?'智能检测边界':'等分';
+  status.textContent=`✓ 已${how}切成 ${n} 帧, 已切到 [分别上传] tab 查看, 不准可切换切分方式重切`;
 });
+
+// margin slider only matters in equal mode
+splitMode.addEventListener('change',()=>{marginRow.style.display=splitMode.value==='equal'?'':'none'});
+marginRow.style.display='none'; // smart is default
 
 function buildSlot(i){
   const s=document.createElement('div');
