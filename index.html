@@ -296,12 +296,15 @@ function detectGridBoundaries(bitmap,cols,rows){
   for(let y=0;y<h;y++){let i=(y*w)*4;for(let x=0;x<w;x++){const r=data[i],g=data[i+1],b=data[i+2];if(r<240||g<240||b<240){rowDark[y]++;colDark[x]++}i+=4}}
   const finalRows=pickNRanges(findContentRanges(rowDark,w*0.02),rows,h);
   const finalCols=pickNRanges(findContentRanges(colDark,h*0.02),cols,w);
-  const boxes=[];
+  const out=[];
   for(const rR of finalRows)for(const cR of finalCols){ // row-major: matches numbered grids
     const t=tightenBBox(data,w,h,cR.start,rR.start,cR.end-cR.start,rR.end-rR.start);
-    boxes.push({x:t.x/scale,y:t.y/scale,w:t.w/scale,h:t.h/scale}); // back to original coords
+    out.push({
+      box:{x:t.x/scale,y:t.y/scale,w:t.w/scale,h:t.h/scale},                 // tight content
+      cell:{x:cR.start/scale,y:rR.start/scale,w:(cR.end-cR.start)/scale,h:(rR.end-rR.start)/scale} // gap-bounded cell range (clip)
+    });
   }
-  return boxes;
+  return out; // [{box, cell}] in original coords
 }
 // Uniform sizing: every frame becomes the SAME square, centered on each box's
 // centroid. Fixes the "one big one small" jitter.
@@ -454,33 +457,42 @@ splitBtn.addEventListener('click',async()=>{
   // yield a frame so the status paints before the (sync) detection pass
   await new Promise(r=>setTimeout(r,0));
 
+  // each cell = {crop:{x,y,w,h}, clip:{x,y,w,h}|null}
+  //  crop = the square region we cut (size of the output frame)
+  //  clip = the cell's own boundary; we only DRAW source pixels inside clip, so a
+  //         big uniform crop can never pull in a neighbour emoji (rest is white)
   let cells;
   if(splitMode.value==='smart'){
-    const boxes=detectGridBoundaries(img,cols,rows);
-    cells=(uniformSize.value==='yes')
-      ? normalizeBBoxes(boxes,parseInt(safetyPad.value)/100) // all frames same square size
-      : boxes.map(b=>squarify(b,img.width,img.height));      // keep each frame's actual size
+    const det=detectGridBoundaries(img,cols,rows); // [{box,cell}]
+    let crops;
+    if(uniformSize.value==='yes'){
+      crops=normalizeBBoxes(det.map(d=>d.box),parseInt(safetyPad.value)/100); // all same square
+    }else{
+      crops=det.map(d=>squarify(d.box,img.width,img.height)); // each frame's actual size
+    }
+    cells=crops.map((crop,i)=>({crop,clip:det[i].cell}));
   }else{
-    cells=equalCells(img,cols,rows,parseInt(marginSlider.value)/100);
+    cells=equalCells(img,cols,rows,parseInt(marginSlider.value)/100).map(c=>({crop:c,clip:null}));
   }
 
   for(let i=0;i<NUM_FRAMES;i++){frames[i]=null}
   const n=Math.min(cells.length,NUM_FRAMES);
   for(let idx=0;idx<n;idx++){
-    const cell=cells[idx];
-    const cw=Math.max(1,Math.round(cell.w)),ch=Math.max(1,Math.round(cell.h));
+    const {crop,clip}=cells[idx];
+    const cw=Math.max(1,Math.round(crop.w)),ch=Math.max(1,Math.round(crop.h));
     const canvas=document.createElement('canvas');
     canvas.width=cw;canvas.height=ch;
     const ctx=canvas.getContext('2d');
-    // fill white first so any overflow past the source image stays clean (white
-    // is later removed by the transparent-bg option) — never crops the emoji
+    // fill white first; any area outside the source image OR outside this cell's
+    // own range stays white (white is removed by the transparent-bg option)
     ctx.fillStyle='#ffffff';ctx.fillRect(0,0,cw,ch);
-    // draw only the part of the cell that overlaps the image, at 1:1 (no scaling),
-    // offset so content keeps its position inside the frame
-    const sx=Math.max(0,cell.x),sy=Math.max(0,cell.y);
-    const sx2=Math.min(img.width,cell.x+cell.w),sy2=Math.min(img.height,cell.y+cell.h);
+    // valid source = crop ∩ image ∩ cell-clip  → never draws a neighbour's pixels
+    const cx0=clip?Math.max(0,clip.x):0, cy0=clip?Math.max(0,clip.y):0;
+    const cx1=clip?Math.min(img.width,clip.x+clip.w):img.width, cy1=clip?Math.min(img.height,clip.y+clip.h):img.height;
+    const sx=Math.max(crop.x,cx0),sy=Math.max(crop.y,cy0);
+    const sx2=Math.min(crop.x+crop.w,cx1),sy2=Math.min(crop.y+crop.h,cy1);
     const sw=sx2-sx,sh=sy2-sy;
-    if(sw>0&&sh>0)ctx.drawImage(img,sx,sy,sw,sh,sx-cell.x,sy-cell.y,sw,sh);
+    if(sw>0&&sh>0)ctx.drawImage(img,sx,sy,sw,sh,sx-crop.x,sy-crop.y,sw,sh); // 1:1, offset keeps position
     const blob=await new Promise(res=>canvas.toBlob(res,'image/png'));
     const bitmap=await createImageBitmap(blob);
     frames[idx]={bitmap,url:URL.createObjectURL(blob)};
