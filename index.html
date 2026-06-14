@@ -114,8 +114,8 @@
       <div class="grid-row">
         <label>切分方式</label>
         <select id="splitMode">
-          <option value="smart" selected>智能检测边界 (推荐)</option>
-          <option value="equal">等分网格</option>
+          <option value="equal" selected>等分网格 (默认 - 适合 AI 拼图)</option>
+          <option value="smart">智能检测边界 (适合手工拼合)</option>
         </select>
       </div>
       <div class="grid-row" id="uniformRow">
@@ -273,7 +273,7 @@ function pickNRanges(ranges,n,total){
 function tightenBBox(data,imgW,imgH,x0,y0,bw,bh){
   let minX=imgW,minY=imgH,maxX=-1,maxY=-1,has=false;
   const xEnd=Math.min(x0+bw,imgW),yEnd=Math.min(y0+bh,imgH);
-  for(let y=y0;y<yEnd;y++){let i=(y*imgW+x0)*4;for(let x=x0;x<xEnd;x++){const r=data[i],g=data[i+1],b=data[i+2];if(r<240||g<240||b<240){has=true;if(x<minX)minX=x;if(x>maxX)maxX=x;if(y<minY)minY=y;if(y>maxY)maxY=y}i+=4}}
+  for(let y=y0;y<yEnd;y++){let i=(y*imgW+x0)*4;for(let x=x0;x<xEnd;x++){const a=data[i+3],r=data[i],g=data[i+1],b=data[i+2];if(a>=128&&(r<240||g<240||b<240)){has=true;if(x<minX)minX=x;if(x>maxX)maxX=x;if(y<minY)minY=y;if(y>maxY)maxY=y}i+=4}}
   if(!has)return{x:x0,y:y0,w:bw,h:bh};
   const padX=(maxX-minX)*0.10,padY=(maxY-minY)*0.10;
   const x=Math.max(0,Math.floor(minX-padX)),y=Math.max(0,Math.floor(minY-padY));
@@ -286,25 +286,38 @@ function squarify(box,imgW,imgH){
   nx=Math.max(0,Math.min(nx,imgW-s));ny=Math.max(0,Math.min(ny,imgH-s));
   return{x:Math.round(nx),y:Math.round(ny),w:Math.round(s),h:Math.round(s)};
 }
-// Returns one tight content bbox per cell, in ORIGINAL image coords (not yet
-// squared/normalized — the caller decides how to frame them). Always returns
-// exactly cols*rows boxes (pickNRanges forces the count), so frame count is
-// guaranteed = NUM_FRAMES.
-function detectGridBoundaries(bitmap,cols,rows){
+// Returns {cells:[{box,cell}], usedEqual} in ORIGINAL image coords.
+//  box  = tight content bbox within the cell (caller frames it)
+//  cell = the cell's boundary (used as a clip so neighbours never leak in)
+// Detection is ALPHA-AWARE: transparent pixels (alpha<128) count as background,
+// not content — without this, a transparent-PNG grid reads as "all content" and
+// no gaps are found. If the grid is tightly packed (few/no gap bands), we fall
+// back to an even grid so a borderless AI sheet still splits cleanly.
+// Always returns exactly cols*rows cells, so frame count is guaranteed.
+function detectCells(bitmap,cols,rows,wantSmart){
   const {data,w,h,scale}=getScaledData(bitmap,800);
-  const rowDark=new Float32Array(h),colDark=new Float32Array(w);
-  for(let y=0;y<h;y++){let i=(y*w)*4;for(let x=0;x<w;x++){const r=data[i],g=data[i+1],b=data[i+2];if(r<240||g<240||b<240){rowDark[y]++;colDark[x]++}i+=4}}
-  const finalRows=pickNRanges(findContentRanges(rowDark,w*0.02),rows,h);
-  const finalCols=pickNRanges(findContentRanges(colDark,h*0.02),cols,w);
+  let finalRows,finalCols,usedEqual=!wantSmart;
+  if(wantSmart){
+    const rowDark=new Float32Array(h),colDark=new Float32Array(w);
+    for(let y=0;y<h;y++){let i=(y*w)*4;for(let x=0;x<w;x++){const a=data[i+3],r=data[i],g=data[i+1],b=data[i+2];if(a>=128&&(r<240||g<240||b<240)){rowDark[y]++;colDark[x]++}i+=4}}
+    const rowRanges=findContentRanges(rowDark,w*0.02);
+    const colRanges=findContentRanges(colDark,h*0.02);
+    if(rowRanges.length<rows/2||colRanges.length<cols/2){usedEqual=true} // no clear gaps → even grid
+    else{finalRows=pickNRanges(rowRanges,rows,h);finalCols=pickNRanges(colRanges,cols,w)}
+  }
+  if(usedEqual){
+    finalRows=[];const ch=h/rows;for(let r=0;r<rows;r++)finalRows.push({start:Math.round(r*ch),end:Math.round((r+1)*ch)});
+    finalCols=[];const cw=w/cols;for(let c=0;c<cols;c++)finalCols.push({start:Math.round(c*cw),end:Math.round((c+1)*cw)});
+  }
   const out=[];
   for(const rR of finalRows)for(const cR of finalCols){ // row-major: matches numbered grids
     const t=tightenBBox(data,w,h,cR.start,rR.start,cR.end-cR.start,rR.end-rR.start);
     out.push({
-      box:{x:t.x/scale,y:t.y/scale,w:t.w/scale,h:t.h/scale},                 // tight content
-      cell:{x:cR.start/scale,y:rR.start/scale,w:(cR.end-cR.start)/scale,h:(rR.end-rR.start)/scale} // gap-bounded cell range (clip)
+      box:{x:t.x/scale,y:t.y/scale,w:t.w/scale,h:t.h/scale},
+      cell:{x:cR.start/scale,y:rR.start/scale,w:(cR.end-cR.start)/scale,h:(rR.end-rR.start)/scale}
     });
   }
-  return out; // [{box, cell}] in original coords
+  return {cells:out,usedEqual};
 }
 // Uniform sizing: every frame becomes the SAME square, centered on each box's
 // centroid. Fixes the "one big one small" jitter.
@@ -438,42 +451,23 @@ gridLayout.addEventListener('change',updateSplitHint);
 frameCountSelect.addEventListener('change',()=>setFrameCount(parseInt(frameCountSelect.value)));
 marginSlider.addEventListener('input',()=>{marginValue.textContent=marginSlider.value+'%'});
 
-function equalCells(img,cols,rows,margin){
-  const cellW=img.width/cols,cellH=img.height/rows;
-  const mx=cellW*margin,my=cellH*margin;
-  const cells=[];
-  for(let r=0;r<rows;r++)for(let c=0;c<cols;c++){ // row-major
-    cells.push({x:c*cellW+mx,y:r*cellH+my,w:cellW-2*mx,h:cellH-2*my});
-  }
-  return cells;
-}
-
 splitBtn.addEventListener('click',async()=>{
   if(!compositeImage)return;
   const [cols,rows]=resolveLayout();
   const img=compositeImage.bitmap;
   splitBtn.disabled=true;
   status.className='status';status.textContent='切片中...';
-  // yield a frame so the status paints before the (sync) detection pass
-  await new Promise(r=>setTimeout(r,0));
+  await new Promise(r=>setTimeout(r,0)); // let status paint before the sync detection pass
 
-  // each cell = {crop:{x,y,w,h}, clip:{x,y,w,h}|null}
-  //  crop = the square region we cut (size of the output frame)
-  //  clip = the cell's own boundary; we only DRAW source pixels inside clip, so a
-  //         big uniform crop can never pull in a neighbour emoji (rest is white)
-  let cells;
-  if(splitMode.value==='smart'){
-    const det=detectGridBoundaries(img,cols,rows); // [{box,cell}]
-    let crops;
-    if(uniformSize.value==='yes'){
-      crops=normalizeBBoxes(det.map(d=>d.box),parseInt(safetyPad.value)/100); // all same square
-    }else{
-      crops=det.map(d=>squarify(d.box,img.width,img.height)); // each frame's actual size
-    }
-    cells=crops.map((crop,i)=>({crop,clip:det[i].cell}));
-  }else{
-    cells=equalCells(img,cols,rows,parseInt(marginSlider.value)/100).map(c=>({crop:c,clip:null}));
-  }
+  // detect cells (alpha-aware). equal mode = even tiles; smart = gap detection with
+  // automatic fallback to even tiles when the sheet is borderless / tightly packed.
+  const {cells:det,usedEqual}=detectCells(img,cols,rows,splitMode.value==='smart');
+  // frame each cell's tight box (uniform square, or its own size), ALWAYS clipped to
+  // the cell range so a neighbour emoji can never bleed into the frame.
+  const crops=(uniformSize.value==='yes')
+    ? normalizeBBoxes(det.map(d=>d.box),parseInt(safetyPad.value)/100)
+    : det.map(d=>squarify(d.box,img.width,img.height));
+  const cells=crops.map((crop,i)=>({crop,clip:det[i].cell}));
 
   for(let i=0;i<NUM_FRAMES;i++){frames[i]=null}
   const n=Math.min(cells.length,NUM_FRAMES);
@@ -483,12 +477,11 @@ splitBtn.addEventListener('click',async()=>{
     const canvas=document.createElement('canvas');
     canvas.width=cw;canvas.height=ch;
     const ctx=canvas.getContext('2d');
-    // fill white first; any area outside the source image OR outside this cell's
-    // own range stays white (white is removed by the transparent-bg option)
-    ctx.fillStyle='#ffffff';ctx.fillRect(0,0,cw,ch);
-    // valid source = crop ∩ image ∩ cell-clip  → never draws a neighbour's pixels
-    const cx0=clip?Math.max(0,clip.x):0, cy0=clip?Math.max(0,clip.y):0;
-    const cx1=clip?Math.min(img.width,clip.x+clip.w):img.width, cy1=clip?Math.min(img.height,clip.y+clip.h):img.height;
+    // leave canvas TRANSPARENT: source may be a transparent PNG; areas outside the
+    // image or outside this cell's clip stay transparent (background applied later).
+    // valid source = crop ∩ image ∩ cell-clip → never draws a neighbour's pixels.
+    const cx0=Math.max(0,clip.x), cy0=Math.max(0,clip.y);
+    const cx1=Math.min(img.width,clip.x+clip.w), cy1=Math.min(img.height,clip.y+clip.h);
     const sx=Math.max(crop.x,cx0),sy=Math.max(crop.y,cy0);
     const sx2=Math.min(crop.x+crop.w,cx1),sy2=Math.min(crop.y+crop.h,cy1);
     const sw=sx2-sx,sh=sy2-sy;
@@ -498,26 +491,24 @@ splitBtn.addEventListener('click',async()=>{
     frames[idx]={bitmap,url:URL.createObjectURL(blob)};
   }
   splitBtn.disabled=false;
-  // switch to individual mode to show the result
   document.querySelector('[data-mode="individual"]').click();
   rebuildGrid();
   updateBtnState();
   status.className='status success';
-  const how=splitMode.value==='smart'?'智能检测边界':'等分';
+  const how=usedEqual?(splitMode.value==='smart'?'紧密图→等分':'等分'):'智能检测';
   status.textContent=`✓ 已${how}切成 ${n} 帧, 已切到 [分别上传] tab 查看, 不准可切换切分方式重切`;
 });
 
 // margin slider only matters in equal mode; uniform-size only in smart mode
 function syncSplitModeUI(){
-  const smart=splitMode.value==='smart';
-  marginRow.style.display=smart?'none':'';
-  uniformRow.style.display=smart?'':'none';
-  safetyRow.style.display=(smart&&uniformSize.value==='yes')?'':'none';
+  marginRow.style.display='none';                 // retired: superseded by per-cell tight bbox
+  uniformRow.style.display='';                    // uniform sizing applies to both modes now
+  safetyRow.style.display=(uniformSize.value==='yes')?'':'none';
 }
 splitMode.addEventListener('change',syncSplitModeUI);
 uniformSize.addEventListener('change',syncSplitModeUI);
 safetyPad.addEventListener('input',()=>{safetyPadValue.textContent=safetyPad.value+'%'});
-syncSplitModeUI(); // smart is default
+syncSplitModeUI(); // equal is default
 
 function buildSlot(i){
   const s=document.createElement('div');
