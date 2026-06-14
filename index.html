@@ -76,8 +76,8 @@
   <div class="section active" id="compositeSection">
     <div class="upload-composite" id="compositeUpload">
       <div class="placeholder">
-        <strong>📤 点击上传拼合图</strong>
-        支持 2×3、3×2、1×6、6×1 网格布局 (像 AI 生成的 6 表情合成图)
+        <strong>📤 点击上传"6 表情合成图"</strong>
+        ⚠️ 这里只给 <strong>一张图里有 6 个表情</strong> 的合成图用。<br>如果你只有单张 emoji, 请改用上面的 [🖼️ 分别上传 6 张] tab。<br><br>支持 2×3、3×2、1×6、6×1 网格布局 (像 AI 生成的 6 表情合成图)
       </div>
     </div>
     <div class="grid-controls" id="gridControls">
@@ -97,6 +97,7 @@
         <span class="value" id="marginValue">2%</span>
       </div>
       <button class="btn-secondary" id="splitBtn" style="margin-top:8px;width:100%">切分成 6 帧 →</button>
+      <div id="splitHint" style="margin-top:8px;font-size:12px;color:#888;text-align:center">✂️ 按当前布局会切出 6 块, 超过 6 个丢弃, 不足留空</div>
     </div>
   </div>
 
@@ -170,6 +171,7 @@ const gridLayout=document.getElementById('gridLayout');
 const marginSlider=document.getElementById('marginSlider');
 const marginValue=document.getElementById('marginValue');
 const splitBtn=document.getElementById('splitBtn');
+const splitHint=document.getElementById('splitHint');
 const BG_COLORS={white:'#fff',pink:'#fce7f3',cream:'#fef3c7',black:'#000'};
 
 // Mode tabs
@@ -212,6 +214,17 @@ compositeUpload.addEventListener('click',()=>{
   inp.click();
 });
 
+function layoutDims(layout){
+  if(layout==='2x3')return[2,3];
+  if(layout==='6x1')return[6,1];
+  if(layout==='1x6')return[1,6];
+  return[3,2]; // 3x2 default; 'auto' resolves to a concrete value before this is used
+}
+function updateSplitHint(){
+  const [cols,rows]=layoutDims(gridLayout.value==='auto'?'3x2':gridLayout.value);
+  const n=cols*rows;
+  splitHint.textContent=`✂️ 当前布局 ${cols}列 × ${rows}行 = 切出 ${n} 块`+(n>6?' (只取前 6 个)':n<6?' (不足 6, 其余留空)':'');
+}
 function autoDetectLayout(){
   if(!compositeImage)return;
   const w=compositeImage.bitmap.width, h=compositeImage.bitmap.height;
@@ -223,8 +236,10 @@ function autoDetectLayout(){
   else if(ratio<1)bestLayout='2x3';
   else bestLayout='3x2';
   gridLayout.value=bestLayout;
+  updateSplitHint();
 }
 
+gridLayout.addEventListener('change',updateSplitHint);
 marginSlider.addEventListener('input',()=>{marginValue.textContent=marginSlider.value+'%'});
 
 splitBtn.addEventListener('click',async()=>{
@@ -270,7 +285,7 @@ splitBtn.addEventListener('click',async()=>{
   rebuildGrid();
   updateBtnState();
   status.className='status success';
-  status.textContent=`✓ 已切成 ${idx} 帧, 可以预览/导出`;
+  status.textContent=`✓ 切成 ${idx} 帧, 已切换到 [分别上传] tab 查看效果, 下方可直接生成`;
 });
 
 function buildSlot(i){
@@ -375,8 +390,29 @@ function renderFrameToCanvas(idx,size,bg){
 }
 
 async function generateGIF(seq,size,speed,loop,bg){
-  return new Promise((resolve)=>{
-    const gif=new GIF({workers:2,quality:8,width:size,height:size,workerScript:'https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js',transparent:bg==='transparent'?0x00ff00:null,repeat:loop===1?-1:0});
+  // Fetch worker script and run it from a same-origin blob URL.
+  // Mobile Safari (iOS) blocks cross-origin Web Workers, which makes gif.js
+  // hang forever at 0%. A blob URL is same-origin so the worker can start.
+  let workerUrl=null;
+  try{
+    const r=await fetch('https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js');
+    if(r.ok){
+      const code=await r.text();
+      workerUrl=URL.createObjectURL(new Blob([code],{type:'application/javascript'}));
+    }
+  }catch(e){/* fall back to main-thread (workers:0) below */}
+
+  return new Promise((resolve,reject)=>{
+    let done=false;
+    const gif=new GIF({
+      workers: workerUrl?2:0,        // 0 = synchronous main-thread fallback (slow but reliable)
+      quality:8,width:size,height:size,
+      workerScript: workerUrl||undefined,
+      transparent:bg==='transparent'?0x00ff00:null,
+      repeat:loop===1?-1:0
+    });
+    const cleanup=()=>{if(workerUrl)URL.revokeObjectURL(workerUrl)};
+    const to=setTimeout(()=>{if(done)return;done=true;cleanup();try{gif.abort()}catch(e){}reject(new Error('GIF 生成超时, 试试 APNG 格式'))},60000);
     for(const idx of seq){
       const c=document.createElement('canvas');c.width=size;c.height=size;
       const cx=c.getContext('2d');
@@ -396,8 +432,9 @@ async function generateGIF(seq,size,speed,loop,bg){
       }
       gif.addFrame(c,{delay:speed,copy:true});
     }
-    gif.on('progress',(p)=>{status.textContent='生成中... '+Math.round(p*100)+'%'});
-    gif.on('finished',(blob)=>resolve(blob));
+    gif.on('progress',(p)=>{status.textContent='生成中... '+Math.round(p*100)+'%'+(workerUrl?'':' (兼容模式, 较慢)')});
+    gif.on('finished',(blob)=>{if(done)return;done=true;clearTimeout(to);cleanup();resolve(blob)});
+    gif.on('abort',()=>{if(done)return;done=true;clearTimeout(to);cleanup();reject(new Error('GIF 生成中断'))});
     gif.render();
   });
 }
@@ -453,7 +490,7 @@ resetBtn.addEventListener('click',()=>{
   for(let i=0;i<NUM_FRAMES;i++)frames[i]=null;
   compositeImage=null;
   compositeUpload.classList.remove('has-image');
-  compositeUpload.innerHTML='<div class="placeholder"><strong>📤 点击上传拼合图</strong>支持 2×3、3×2、1×6、6×1 网格布局</div>';
+  compositeUpload.innerHTML='<div class="placeholder"><strong>📤 点击上传"6 表情合成图"</strong>⚠️ 这里只给一张图里有 6 个表情的合成图用。单张 emoji 请用 [🖼️ 分别上传 6 张] tab。<br><br>支持 2×3、3×2、1×6、6×1 网格布局</div>';
   gridControls.classList.remove('show');
   rebuildGrid();
   status.textContent='';status.className='status';
