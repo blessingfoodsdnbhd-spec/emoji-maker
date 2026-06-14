@@ -26,7 +26,20 @@
   .grid-row{display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap}
   .grid-row label{min-width:80px;font-size:14px;color:#555}
   .frames-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:24px}
-  @media (max-width:600px){.frames-grid{grid-template-columns:repeat(3,1fr)}}
+  .frames-grid.count-6{grid-template-columns:repeat(6,1fr)}
+  .frames-grid.count-9{grid-template-columns:repeat(3,1fr)}
+  .frames-grid.count-12{grid-template-columns:repeat(6,1fr)}
+  .frames-grid.count-16{grid-template-columns:repeat(4,1fr)}
+  .frames-grid.count-24{grid-template-columns:repeat(6,1fr)}
+  .frames-grid.count-30{grid-template-columns:repeat(6,1fr)}
+  .frames-grid.count-16 .frame-slot,.frames-grid.count-24 .frame-slot,.frames-grid.count-30 .frame-slot{border-radius:8px;border-width:1px}
+  .frames-grid.count-16 .frame-slot .num,.frames-grid.count-24 .frame-slot .num,.frames-grid.count-30 .frame-slot .num{font-size:9px;padding:0 2px}
+  .frames-grid.count-24 .frame-slot .label,.frames-grid.count-30 .frame-slot .label,.frames-grid.count-16 .frame-slot .label{font-size:16px}
+  @media (max-width:600px){
+    .frames-grid{grid-template-columns:repeat(3,1fr)}
+    .frames-grid.count-12,.frames-grid.count-24,.frames-grid.count-30{grid-template-columns:repeat(6,1fr)}
+    .frames-grid.count-16{grid-template-columns:repeat(4,1fr)}
+  }
   .frame-slot{aspect-ratio:1;border:2px dashed #ddd;border-radius:12px;background:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;overflow:hidden;position:relative}
   .frame-slot:hover{border-color:#ec4899}
   .frame-slot.filled{border-style:solid;border-color:#ec4899}
@@ -65,30 +78,37 @@
 <body>
 <div class="container">
   <h1>表情包动画生成器</h1>
-  <p class="subtitle">上传拼合图自动切 6 帧, 或分别上传 6 张 — 全程本地处理, 输出 GIF 或透明 APNG</p>
+  <p class="subtitle">上传拼合图自动切多帧 (默认 24 帧, 丝滑), 或分别上传 — 全程本地处理, 输出 GIF / 透明 APNG / WebP 贴纸</p>
 
   <div class="mode-tabs">
     <button class="mode-tab active" data-mode="composite">📷 拼合图自动切</button>
-    <button class="mode-tab" data-mode="individual">🖼️ 分别上传 6 张</button>
+    <button class="mode-tab" data-mode="individual">🖼️ 分别上传</button>
   </div>
 
   <!-- COMPOSITE MODE -->
   <div class="section active" id="compositeSection">
     <div class="upload-composite" id="compositeUpload">
       <div class="placeholder">
-        <strong>📤 点击上传"6 表情合成图"</strong>
-        ⚠️ 这里只给 <strong>一张图里有 6 个表情</strong> 的合成图用。<br>如果你只有单张 emoji, 请改用上面的 [🖼️ 分别上传 6 张] tab。<br><br>支持 2×3、3×2、1×6、6×1 网格布局 (像 AI 生成的 6 表情合成图)
+        <strong>📤 点击上传"多格表情合成图"</strong>
+        ⚠️ 这里只给 <strong>一张图里有多个表情</strong> 的拼合图用 (6/9/12/16/24/30 格网格)。<br>如果你只有单张 emoji, 请改用上面的 [🖼️ 分别上传] tab。
       </div>
     </div>
     <div class="grid-controls" id="gridControls">
       <div class="grid-row">
+        <label>帧数</label>
+        <select id="frameCountSelect">
+          <option value="6">6 帧</option>
+          <option value="9">9 帧</option>
+          <option value="12">12 帧</option>
+          <option value="16">16 帧</option>
+          <option value="24" selected>24 帧 (推荐 - 丝滑)</option>
+          <option value="30">30 帧</option>
+        </select>
+      </div>
+      <div class="grid-row">
         <label>网格布局</label>
         <select id="gridLayout">
           <option value="auto">自动检测</option>
-          <option value="3x2">3列 × 2行 (横向)</option>
-          <option value="2x3">2列 × 3行 (纵向)</option>
-          <option value="6x1">6列 × 1行</option>
-          <option value="1x6">1列 × 6行</option>
         </select>
       </div>
       <div class="grid-row">
@@ -96,8 +116,8 @@
         <input type="range" id="marginSlider" min="0" max="20" value="2" step="1">
         <span class="value" id="marginValue">2%</span>
       </div>
-      <button class="btn-secondary" id="splitBtn" style="margin-top:8px;width:100%">切分成 6 帧 →</button>
-      <div id="splitHint" style="margin-top:8px;font-size:12px;color:#888;text-align:center">✂️ 按当前布局会切出 6 块, 超过 6 个丢弃, 不足留空</div>
+      <button class="btn-secondary" id="splitBtn" style="margin-top:8px;width:100%">切分成 24 帧 →</button>
+      <div id="splitHint" style="margin-top:8px;font-size:12px;color:#888;text-align:center"></div>
     </div>
   </div>
 
@@ -120,7 +140,7 @@
         <button class="format-btn" data-format="webp">WebP (贴纸)</button>
       </div>
     </div>
-    <div class="control-row"><label>速度</label><input type="range" id="speedSlider" min="80" max="600" value="220" step="10"><span class="value" id="speedValue">220ms/帧</span></div>
+    <div class="control-row"><label>速度</label><input type="range" id="speedSlider" min="40" max="500" value="80" step="10"><span class="value" id="speedValue">80ms/帧</span></div>
     <div class="control-row"><label>输出尺寸</label><select id="sizeSelect"><option value="128">128 × 128</option><option value="240">240 × 240 (微信)</option><option value="256" selected>256 × 256 (推荐)</option><option value="320">320 × 320 (LINE)</option><option value="480">480 × 480 (高清)</option><option value="512">512 × 512 (WhatsApp/Telegram 贴纸)</option></select></div>
     <div class="control-row" id="webpNote" style="display:none;font-size:13px;color:#0891b2;background:#ecfeff;padding:10px 12px;border-radius:8px"><span>📦 WhatsApp/Telegram 贴纸要求 <strong>512×512</strong>、≤500KB、无限循环 — 尺寸已自动锁定。首次需下载 webp 编码器 (约 25MB), 浏览器会缓存, 下次秒开。</span></div>
     <div class="control-row"><label>背景</label><select id="bgSelect"><option value="transparent" selected>透明 (移除白底)</option><option value="white">白色</option><option value="pink">浅粉色</option><option value="cream">米色</option><option value="black">黑色</option></select></div>
@@ -136,7 +156,7 @@
 
   <div class="footer-tip">
     💡 <strong>使用建议</strong><br>
-    • <strong>拼合图模式</strong>: 把 AI 生成的"6 表情合成图"直接拖进来, 自动切成 6 帧<br>
+    • <strong>拼合图模式</strong>: 把 AI 生成的"多格表情合成图"拖进来, 选帧数 (6~30), 自动切片; 24 帧最丝滑<br>
     • <strong>APNG 格式</strong>: 真透明背景, 卡通图边缘干净, 但文件大些, iMessage / Telegram / 现代浏览器都支持<br>
     • <strong>GIF 格式</strong>: 所有平台都支持, 透明边缘有锯齿, 微信表情包必须 GIF<br>
     • <strong>WebP 贴纸</strong>: WhatsApp / Telegram 动态贴纸专用, 自动锁 512×512、无限循环; 首次下载编码器约 25MB (之后缓存)。WhatsApp 上限 500KB、Telegram 256KB, 超了就减帧或调慢速度<br>
@@ -149,7 +169,7 @@
 <script src="https://cdn.jsdelivr.net/gh/photopea/UPNG.js@master/UPNG.js"></script>
 <script src="https://cdn.jsdelivr.net/gh/photopea/UPNG.js@master/pako.min.js"></script>
 <script>
-const NUM_FRAMES=6;
+let NUM_FRAMES=24;
 let frames=new Array(NUM_FRAMES).fill(null);
 let currentMode='composite';
 let currentFormat='gif';
@@ -175,7 +195,52 @@ const marginSlider=document.getElementById('marginSlider');
 const marginValue=document.getElementById('marginValue');
 const splitBtn=document.getElementById('splitBtn');
 const splitHint=document.getElementById('splitHint');
+const frameCountSelect=document.getElementById('frameCountSelect');
 const BG_COLORS={white:'#fff',pink:'#fce7f3',cream:'#fef3c7',black:'#000'};
+
+// Grid layouts offered per frame count (cols x rows)
+const LAYOUTS={
+  6:[['3x2','3列 × 2行 (横向)'],['2x3','2列 × 3行 (纵向)'],['6x1','6列 × 1行'],['1x6','1列 × 6行']],
+  9:[['3x3','3列 × 3行']],
+  12:[['3x4','3列 × 4行'],['4x3','4列 × 3行'],['6x2','6列 × 2行'],['2x6','2列 × 6行']],
+  16:[['4x4','4列 × 4行']],
+  24:[['6x4','6列 × 4行'],['4x6','4列 × 6行'],['8x3','8列 × 3行'],['3x8','3列 × 8行']],
+  30:[['6x5','6列 × 5行'],['5x6','5列 × 6行'],['10x3','10列 × 3行'],['3x10','3列 × 10行']]
+};
+function populateLayouts(n){
+  gridLayout.innerHTML='<option value="auto">自动检测</option>';
+  for(const [val,label] of (LAYOUTS[n]||LAYOUTS[6])){
+    const o=document.createElement('option');o.value=val;o.textContent=label;gridLayout.appendChild(o);
+  }
+}
+function bestLayoutForRatio(n,ratio){
+  const opts=LAYOUTS[n]||LAYOUTS[6];
+  let best=opts[0][0],bestDiff=Infinity;
+  for(const [val] of opts){
+    const [c,r]=val.split('x').map(Number);
+    const diff=Math.abs((c/r)-ratio);
+    if(diff<bestDiff){bestDiff=diff;best=val}
+  }
+  return best;
+}
+function resolveLayout(){
+  let v=gridLayout.value;
+  if(v==='auto'){
+    const ratio=compositeImage?compositeImage.bitmap.width/compositeImage.bitmap.height:1.5;
+    v=bestLayoutForRatio(NUM_FRAMES,ratio);
+  }
+  const [c,r]=v.split('x').map(Number);
+  return [c,r];
+}
+function setFrameCount(n){
+  NUM_FRAMES=n;
+  frames=new Array(n).fill(null);
+  populateLayouts(n);
+  splitBtn.textContent=`切分成 ${n} 帧 →`;
+  if(compositeImage)autoDetectLayout(); else updateSplitHint();
+  rebuildGrid();
+  updateBtnState();
+}
 
 // Mode tabs
 document.querySelectorAll('.mode-tab').forEach(t=>{
@@ -230,58 +295,40 @@ compositeUpload.addEventListener('click',()=>{
   inp.click();
 });
 
-function layoutDims(layout){
-  if(layout==='2x3')return[2,3];
-  if(layout==='6x1')return[6,1];
-  if(layout==='1x6')return[1,6];
-  return[3,2]; // 3x2 default; 'auto' resolves to a concrete value before this is used
-}
 function updateSplitHint(){
-  const [cols,rows]=layoutDims(gridLayout.value==='auto'?'3x2':gridLayout.value);
+  const [cols,rows]=resolveLayout();
   const n=cols*rows;
-  splitHint.textContent=`✂️ 当前布局 ${cols}列 × ${rows}行 = 切出 ${n} 块`+(n>6?' (只取前 6 个)':n<6?' (不足 6, 其余留空)':'');
+  splitHint.textContent=`✂️ 当前布局 ${cols}列 × ${rows}行 = 切出 ${n} 块`+(n>NUM_FRAMES?` (只取前 ${NUM_FRAMES} 个)`:n<NUM_FRAMES?` (不足 ${NUM_FRAMES}, 其余留空)`:'');
 }
 function autoDetectLayout(){
   if(!compositeImage)return;
   const w=compositeImage.bitmap.width, h=compositeImage.bitmap.height;
-  const ratio=w/h;
-  // 3x2 ratio ~1.5, 2x3 ratio ~0.67, 6x1 ratio ~6, 1x6 ratio ~0.17
-  let bestLayout='3x2';
-  if(ratio>3)bestLayout='6x1';
-  else if(ratio<0.4)bestLayout='1x6';
-  else if(ratio<1)bestLayout='2x3';
-  else bestLayout='3x2';
-  gridLayout.value=bestLayout;
+  gridLayout.value=bestLayoutForRatio(NUM_FRAMES,w/h);
   updateSplitHint();
 }
 
 gridLayout.addEventListener('change',updateSplitHint);
+frameCountSelect.addEventListener('change',()=>setFrameCount(parseInt(frameCountSelect.value)));
 marginSlider.addEventListener('input',()=>{marginValue.textContent=marginSlider.value+'%'});
 
 splitBtn.addEventListener('click',async()=>{
   if(!compositeImage)return;
-  const layout=gridLayout.value;
   const margin=parseInt(marginSlider.value)/100;
-  let cols=3,rows=2;
-  if(layout==='2x3'){cols=2;rows=3}
-  else if(layout==='6x1'){cols=6;rows=1}
-  else if(layout==='1x6'){cols=1;rows=6}
-  else if(layout==='3x2'){cols=3;rows=2}
-  else{ // auto - use the value already set
-    const v=gridLayout.value;
-    if(v==='2x3'){cols=2;rows=3}else if(v==='6x1'){cols=6;rows=1}else if(v==='1x6'){cols=1;rows=6}
-  }
+  const [cols,rows]=resolveLayout();
   const img=compositeImage.bitmap;
   const cellW=img.width/cols;
   const cellH=img.height/rows;
   const mx=cellW*margin;
   const my=cellH*margin;
 
+  splitBtn.disabled=true;
+  status.className='status';status.textContent='切片中...';
   for(let i=0;i<NUM_FRAMES;i++){frames[i]=null}
   let idx=0;
+  outer:
   for(let r=0;r<rows;r++){
     for(let c=0;c<cols;c++){
-      if(idx>=NUM_FRAMES)break;
+      if(idx>=NUM_FRAMES)break outer;  // row-major order matches numbered grids (1,2,3...)
       const sx=c*cellW+mx;
       const sy=r*cellH+my;
       const sw=cellW-2*mx;
@@ -296,6 +343,7 @@ splitBtn.addEventListener('click',async()=>{
       idx++;
     }
   }
+  splitBtn.disabled=false;
   // switch to individual mode to show the result
   document.querySelector('[data-mode="individual"]').click();
   rebuildGrid();
@@ -328,14 +376,13 @@ function renderSlot(s,i){
   if(f){s.classList.add('filled');s.innerHTML=`<img src="${f.url}"><span class="num">${i+1}</span><span class="remove">×</span>`}
   else{s.classList.remove('filled');s.innerHTML=`<span class="label">+</span><span class="num">${i+1}</span>`}
 }
-function rebuildGrid(){grid.innerHTML='';for(let i=0;i<NUM_FRAMES;i++)grid.appendChild(buildSlot(i))}
-rebuildGrid();
+function rebuildGrid(){grid.className='frames-grid count-'+NUM_FRAMES;grid.innerHTML='';for(let i=0;i<NUM_FRAMES;i++)grid.appendChild(buildSlot(i))}
 
 function filledIndexes(){return frames.map((f,i)=>f?i:-1).filter(i=>i!==-1)}
 function updateBtnState(){
   const n=filledIndexes().length;
   generateBtn.disabled=n<2;
-  const ext=currentFormat==='apng'?'PNG':'GIF';
+  const ext=currentFormat==='apng'?'PNG':currentFormat==='webp'?'WebP':'GIF';
   generateBtn.textContent=n<2?`至少 2 帧 (当前 ${n})`:`生成并下载 ${ext} (${n} 帧)`;
   drawSizePreview();
 }
@@ -508,25 +555,33 @@ async function generateWebP(seq,size,speed,loop,bg){
     await ffmpeg.writeFile(name,buf);
     names.push(name);
   }
-  status.textContent='合成动画 WebP...';
   let fps=Math.round(1000/speed);
   if(fps>30)fps=30;          // WhatsApp 上限 30fps
   if(fps<1)fps=1;
   const loopArg=loop===1?'1':'0'; // 0 = 无限循环 (libwebp)
-  await ffmpeg.exec([
-    '-framerate',String(fps),
-    '-i','frame%03d.png',
-    '-vf',`scale=${size}:${size}:flags=lanczos`,
-    '-loop',loopArg,
-    '-lossless','0',
-    '-quality','80',
-    '-an',
-    'out.webp'
-  ]);
-  const data=await ffmpeg.readFile('out.webp');
+  // Auto-step quality down until the sticker fits WhatsApp's 500KB cap.
+  // 24-frame stickers at 512px are ~4x bigger than 6-frame, so start lower.
+  let blob=null;
+  for(let q=80;q>=40;q-=10){
+    status.textContent=`合成动画 WebP (quality ${q})...`;
+    try{await ffmpeg.deleteFile('out.webp')}catch(e){}
+    await ffmpeg.exec([
+      '-framerate',String(fps),
+      '-i','frame%03d.png',
+      '-vf',`scale=${size}:${size}:flags=lanczos`,
+      '-loop',loopArg,
+      '-lossless','0',
+      '-quality',String(q),
+      '-an',
+      'out.webp'
+    ]);
+    const data=await ffmpeg.readFile('out.webp');
+    blob=new Blob([data.buffer],{type:'image/webp'});
+    if(blob.size<=500*1024)break;
+  }
   // cleanup FS
   try{for(const n of names)await ffmpeg.deleteFile(n);await ffmpeg.deleteFile('out.webp')}catch(e){}
-  return new Blob([data.buffer],{type:'image/webp'});
+  return blob;
 }
 
 generateBtn.addEventListener('click',async()=>{
@@ -570,7 +625,7 @@ resetBtn.addEventListener('click',()=>{
   for(let i=0;i<NUM_FRAMES;i++)frames[i]=null;
   compositeImage=null;
   compositeUpload.classList.remove('has-image');
-  compositeUpload.innerHTML='<div class="placeholder"><strong>📤 点击上传"6 表情合成图"</strong>⚠️ 这里只给一张图里有 6 个表情的合成图用。单张 emoji 请用 [🖼️ 分别上传 6 张] tab。<br><br>支持 2×3、3×2、1×6、6×1 网格布局</div>';
+  compositeUpload.innerHTML='<div class="placeholder"><strong>📤 点击上传"多格表情合成图"</strong>⚠️ 这里只给一张图里有多个表情的拼合图用 (6/9/12/16/24/30 格)。单张 emoji 请用 [🖼️ 分别上传] tab。</div>';
   gridControls.classList.remove('show');
   rebuildGrid();
   status.textContent='';status.className='status';
@@ -579,7 +634,8 @@ resetBtn.addEventListener('click',()=>{
   drawEmpty(outputCtx,outputCanvas);
 });
 
-updateBtnState();
+// init: build layouts + grid for the default frame count (24)
+setFrameCount(parseInt(frameCountSelect.value));
 </script>
 </body>
 </html>
