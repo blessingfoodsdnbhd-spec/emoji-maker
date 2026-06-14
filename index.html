@@ -118,6 +118,13 @@
           <option value="equal">等分网格</option>
         </select>
       </div>
+      <div class="grid-row" id="uniformRow">
+        <label>统一尺寸</label>
+        <select id="uniformSize">
+          <option value="yes" selected>是 (默认 - 动画顺滑)</option>
+          <option value="no">否 (保留每帧实际大小)</option>
+        </select>
+      </div>
       <div class="grid-row" id="marginRow">
         <label>边缘留白</label>
         <input type="range" id="marginSlider" min="0" max="20" value="2" step="1">
@@ -205,6 +212,8 @@ const splitHint=document.getElementById('splitHint');
 const frameCountSelect=document.getElementById('frameCountSelect');
 const splitMode=document.getElementById('splitMode');
 const marginRow=document.getElementById('marginRow');
+const uniformSize=document.getElementById('uniformSize');
+const uniformRow=document.getElementById('uniformRow');
 const BG_COLORS={white:'#fff',pink:'#fce7f3',cream:'#fef3c7',black:'#000'};
 
 // --- Smart grid-boundary detection ---
@@ -269,19 +278,38 @@ function squarify(box,imgW,imgH){
   nx=Math.max(0,Math.min(nx,imgW-s));ny=Math.max(0,Math.min(ny,imgH-s));
   return{x:Math.round(nx),y:Math.round(ny),w:Math.round(s),h:Math.round(s)};
 }
+// Returns one tight content bbox per cell, in ORIGINAL image coords (not yet
+// squared/normalized — the caller decides how to frame them). Always returns
+// exactly cols*rows boxes (pickNRanges forces the count), so frame count is
+// guaranteed = NUM_FRAMES.
 function detectGridBoundaries(bitmap,cols,rows){
   const {data,w,h,scale}=getScaledData(bitmap,800);
   const rowDark=new Float32Array(h),colDark=new Float32Array(w);
   for(let y=0;y<h;y++){let i=(y*w)*4;for(let x=0;x<w;x++){const r=data[i],g=data[i+1],b=data[i+2];if(r<240||g<240||b<240){rowDark[y]++;colDark[x]++}i+=4}}
   const finalRows=pickNRanges(findContentRanges(rowDark,w*0.02),rows,h);
   const finalCols=pickNRanges(findContentRanges(colDark,h*0.02),cols,w);
-  const cells=[];
+  const boxes=[];
   for(const rR of finalRows)for(const cR of finalCols){ // row-major: matches numbered grids
-    const tight=tightenBBox(data,w,h,cR.start,rR.start,cR.end-cR.start,rR.end-rR.start);
-    const sq=squarify(tight,w,h);
-    cells.push({x:Math.round(sq.x/scale),y:Math.round(sq.y/scale),w:Math.round(sq.w/scale),h:Math.round(sq.h/scale)});
+    const t=tightenBBox(data,w,h,cR.start,rR.start,cR.end-cR.start,rR.end-rR.start);
+    boxes.push({x:t.x/scale,y:t.y/scale,w:t.w/scale,h:t.h/scale}); // back to original coords
   }
-  return cells;
+  return boxes;
+}
+// Uniform sizing: every frame becomes the SAME square (centered on each box's
+// centroid, clamped to the image). Fixes the "one frame big, one small" jitter.
+// Target = 95th-percentile of the larger side (+10%), so a single oversized
+// emoji doesn't blow up all frames.
+function normalizeBBoxes(boxes,imgW,imgH){
+  if(!boxes.length)return boxes;
+  const dims=boxes.map(b=>Math.max(b.w,b.h)).sort((a,b)=>a-b);
+  const p95=dims[Math.min(dims.length-1,Math.floor(dims.length*0.95))];
+  const size=Math.min(p95*1.1,imgW,imgH);
+  return boxes.map(b=>{
+    const cx=b.x+b.w/2,cy=b.y+b.h/2;
+    let x=cx-size/2,y=cy-size/2;
+    x=Math.max(0,Math.min(x,imgW-size));y=Math.max(0,Math.min(y,imgH-size));
+    return{x:Math.round(x),y:Math.round(y),w:Math.round(size),h:Math.round(size)};
+  });
 }
 
 // Grid layouts offered per frame count (cols x rows)
@@ -418,7 +446,10 @@ splitBtn.addEventListener('click',async()=>{
 
   let cells;
   if(splitMode.value==='smart'){
-    cells=detectGridBoundaries(img,cols,rows);
+    const boxes=detectGridBoundaries(img,cols,rows);
+    cells=(uniformSize.value==='yes')
+      ? normalizeBBoxes(boxes,img.width,img.height)   // all frames same square size
+      : boxes.map(b=>squarify(b,img.width,img.height)); // keep each frame's actual size
   }else{
     cells=equalCells(img,cols,rows,parseInt(marginSlider.value)/100);
   }
@@ -445,9 +476,14 @@ splitBtn.addEventListener('click',async()=>{
   status.textContent=`✓ 已${how}切成 ${n} 帧, 已切到 [分别上传] tab 查看, 不准可切换切分方式重切`;
 });
 
-// margin slider only matters in equal mode
-splitMode.addEventListener('change',()=>{marginRow.style.display=splitMode.value==='equal'?'':'none'});
-marginRow.style.display='none'; // smart is default
+// margin slider only matters in equal mode; uniform-size only in smart mode
+function syncSplitModeUI(){
+  const smart=splitMode.value==='smart';
+  marginRow.style.display=smart?'none':'';
+  uniformRow.style.display=smart?'':'none';
+}
+splitMode.addEventListener('change',syncSplitModeUI);
+syncSplitModeUI(); // smart is default
 
 function buildSlot(i){
   const s=document.createElement('div');
