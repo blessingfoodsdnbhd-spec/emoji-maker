@@ -7,19 +7,33 @@
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
   body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;background:#fafafa;padding:20px;color:#333}
-  .container{max-width:720px;margin:0 auto}
+  .container{max-width:780px;margin:0 auto}
   h1{font-size:24px;margin-bottom:8px}
-  .subtitle{color:#888;margin-bottom:24px;font-size:14px}
+  .subtitle{color:#888;margin-bottom:20px;font-size:14px;line-height:1.5}
+  .mode-tabs{display:flex;gap:8px;margin-bottom:16px;background:#fff;border-radius:10px;padding:4px}
+  .mode-tab{flex:1;padding:10px;border:none;background:transparent;border-radius:8px;cursor:pointer;font-size:14px;color:#666;font-weight:500}
+  .mode-tab.active{background:#ec4899;color:#fff}
+  .section{display:none}
+  .section.active{display:block}
+  .upload-composite{background:#fff;border:2px dashed #ddd;border-radius:12px;padding:32px;text-align:center;cursor:pointer;margin-bottom:16px;transition:border-color .2s}
+  .upload-composite:hover{border-color:#ec4899}
+  .upload-composite.has-image{padding:12px;border-style:solid;border-color:#ec4899}
+  .upload-composite img{max-width:100%;max-height:300px;border-radius:8px}
+  .upload-composite .placeholder{color:#999;font-size:14px}
+  .upload-composite .placeholder strong{display:block;color:#555;font-size:16px;margin-bottom:6px}
+  .grid-controls{background:#fff;border-radius:12px;padding:16px;margin-bottom:16px;display:none}
+  .grid-controls.show{display:block}
+  .grid-row{display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap}
+  .grid-row label{min-width:80px;font-size:14px;color:#555}
   .frames-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:24px}
   @media (max-width:600px){.frames-grid{grid-template-columns:repeat(3,1fr)}}
-  .frame-slot{aspect-ratio:1;border:2px dashed #ddd;border-radius:12px;background:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;overflow:hidden;position:relative;transition:border-color .2s}
+  .frame-slot{aspect-ratio:1;border:2px dashed #ddd;border-radius:12px;background:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;overflow:hidden;position:relative}
   .frame-slot:hover{border-color:#ec4899}
   .frame-slot.filled{border-style:solid;border-color:#ec4899}
   .frame-slot img{width:100%;height:100%;object-fit:cover;pointer-events:none}
   .frame-slot .label{color:#ccc;font-size:24px;font-weight:200;pointer-events:none}
   .frame-slot .num{position:absolute;bottom:2px;left:4px;color:#999;font-size:11px;pointer-events:none;background:rgba(255,255,255,.85);padding:0 4px;border-radius:4px}
-  .frame-slot .remove{position:absolute;top:4px;right:4px;width:22px;height:22px;background:rgba(0,0,0,.6);color:#fff;border-radius:50%;font-size:14px;display:flex;align-items:center;justify-content:center;cursor:pointer;opacity:0;transition:opacity .2s;line-height:1}
-  .frame-slot.filled .remove{opacity:1}
+  .frame-slot .remove{position:absolute;top:4px;right:4px;width:22px;height:22px;background:rgba(0,0,0,.6);color:#fff;border-radius:50%;font-size:14px;display:flex;align-items:center;justify-content:center;cursor:pointer;line-height:1}
   .preview-section{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px}
   @media (max-width:600px){.preview-section{grid-template-columns:1fr}}
   .preview-box{background:#fff;border-radius:12px;padding:16px;text-align:center}
@@ -32,6 +46,9 @@
   .control-row input[type=range]{flex:1;min-width:120px}
   .control-row .value{min-width:80px;text-align:right;font-size:14px;color:#ec4899;font-weight:500}
   select{padding:6px 10px;border:1px solid #ddd;border-radius:6px;font-size:14px;background:#fff;flex:1}
+  .format-toggle{display:flex;gap:8px}
+  .format-btn{flex:1;padding:10px;border:2px solid #ddd;background:#fff;border-radius:8px;cursor:pointer;font-size:13px;color:#666;font-weight:500}
+  .format-btn.active{border-color:#ec4899;color:#ec4899;background:#fdf2f8}
   .btn-row{display:flex;gap:12px;flex-wrap:wrap}
   button{padding:12px 24px;border:none;border-radius:8px;font-size:14px;font-weight:500;cursor:pointer;transition:all .2s}
   .btn-primary{background:#ec4899;color:#fff;flex:1}
@@ -41,58 +58,410 @@
   .btn-secondary:hover{background:#f5f5f5}
   .status{margin-top:12px;font-size:13px;color:#888;text-align:center;min-height:18px}
   .status.success{color:#10b981}
+  .status.error{color:#ef4444}
   .footer-tip{margin-top:24px;padding:16px;background:#fef3c7;border-radius:8px;font-size:13px;color:#92400e;line-height:1.6}
 </style>
 </head>
 <body>
 <div class="container">
   <h1>表情包动画生成器</h1>
-  <p class="subtitle">上传 2~6 张照片 → 自动循环生成动态 emoji (GIF 格式) — 全程本地处理,不上传任何数据</p>
-  <div class="frames-grid" id="framesGrid"></div>
+  <p class="subtitle">上传拼合图自动切 6 帧, 或分别上传 6 张 — 全程本地处理, 输出 GIF 或透明 APNG</p>
+
+  <div class="mode-tabs">
+    <button class="mode-tab active" data-mode="composite">📷 拼合图自动切</button>
+    <button class="mode-tab" data-mode="individual">🖼️ 分别上传 6 张</button>
+  </div>
+
+  <!-- COMPOSITE MODE -->
+  <div class="section active" id="compositeSection">
+    <div class="upload-composite" id="compositeUpload">
+      <div class="placeholder">
+        <strong>📤 点击上传拼合图</strong>
+        支持 2×3、3×2、1×6、6×1 网格布局 (像 AI 生成的 6 表情合成图)
+      </div>
+    </div>
+    <div class="grid-controls" id="gridControls">
+      <div class="grid-row">
+        <label>网格布局</label>
+        <select id="gridLayout">
+          <option value="auto">自动检测</option>
+          <option value="3x2">3列 × 2行 (横向)</option>
+          <option value="2x3">2列 × 3行 (纵向)</option>
+          <option value="6x1">6列 × 1行</option>
+          <option value="1x6">1列 × 6行</option>
+        </select>
+      </div>
+      <div class="grid-row">
+        <label>边缘留白</label>
+        <input type="range" id="marginSlider" min="0" max="20" value="2" step="1">
+        <span class="value" id="marginValue">2%</span>
+      </div>
+      <button class="btn-secondary" id="splitBtn" style="margin-top:8px;width:100%">切分成 6 帧 →</button>
+    </div>
+  </div>
+
+  <!-- INDIVIDUAL MODE -->
+  <div class="section" id="individualSection">
+    <div class="frames-grid" id="framesGrid"></div>
+  </div>
+
   <div class="preview-section">
     <div class="preview-box"><h3>实时预览</h3><canvas id="previewCanvas" class="preview-canvas" width="256" height="256"></canvas></div>
     <div class="preview-box"><h3>输出尺寸预览</h3><canvas id="outputCanvas" class="preview-canvas" width="256" height="256"></canvas></div>
   </div>
+
   <div class="controls">
+    <div class="control-row">
+      <label>输出格式</label>
+      <div class="format-toggle" style="flex:1">
+        <button class="format-btn active" data-format="gif">GIF (兼容性好)</button>
+        <button class="format-btn" data-format="apng">APNG (透明高质量)</button>
+      </div>
+    </div>
     <div class="control-row"><label>速度</label><input type="range" id="speedSlider" min="80" max="600" value="220" step="10"><span class="value" id="speedValue">220ms/帧</span></div>
-    <div class="control-row"><label>输出尺寸</label><select id="sizeSelect"><option value="128">128 × 128</option><option value="240">240 × 240 (微信表情包)</option><option value="256" selected>256 × 256 (推荐)</option><option value="320">320 × 320 (LINE 贴图)</option><option value="480">480 × 480 (高清)</option></select></div>
-    <div class="control-row"><label>背景</label><select id="bgSelect"><option value="white" selected>白色</option><option value="transparent">透明 (自动移除白底)</option><option value="pink">浅粉色</option><option value="cream">米色</option><option value="black">黑色</option></select></div>
+    <div class="control-row"><label>输出尺寸</label><select id="sizeSelect"><option value="128">128 × 128</option><option value="240">240 × 240 (微信)</option><option value="256" selected>256 × 256 (推荐)</option><option value="320">320 × 320 (LINE)</option><option value="480">480 × 480 (高清)</option></select></div>
+    <div class="control-row"><label>背景</label><select id="bgSelect"><option value="transparent" selected>透明 (移除白底)</option><option value="white">白色</option><option value="pink">浅粉色</option><option value="cream">米色</option><option value="black">黑色</option></select></div>
     <div class="control-row"><label>循环</label><select id="loopSelect"><option value="0" selected>无限循环</option><option value="3">循环 3 次</option><option value="1">播放一次</option></select></div>
-    <div class="control-row"><label>方向</label><select id="directionSelect"><option value="forward" selected>正序</option><option value="pingpong">来回 (ping-pong)</option><option value="reverse">倒序</option></select></div>
+    <div class="control-row"><label>方向</label><select id="directionSelect"><option value="forward" selected>正序</option><option value="pingpong">来回 ping-pong</option><option value="reverse">倒序</option></select></div>
   </div>
+
   <div class="btn-row">
-    <button class="btn-primary" id="generateBtn" disabled>至少上传 2 帧</button>
+    <button class="btn-primary" id="generateBtn" disabled>生成并下载</button>
     <button class="btn-secondary" id="resetBtn">清空</button>
   </div>
   <div class="status" id="status"></div>
-  <div class="footer-tip">💡 <strong>小贴士:</strong> 上传连续动作照片效果最好。背景选透明会移除接近白色的像素 (纯白底照片效果好)。微信表情包 GIF 上限 1MB, 建议 240×240。所有处理都在本地浏览器完成, 照片不上传。</div>
+
+  <div class="footer-tip">
+    💡 <strong>使用建议</strong><br>
+    • <strong>拼合图模式</strong>: 把 AI 生成的"6 表情合成图"直接拖进来, 自动切成 6 帧<br>
+    • <strong>APNG 格式</strong>: 真透明背景, 卡通图边缘干净, 但文件大些, iMessage / Telegram / 现代浏览器都支持<br>
+    • <strong>GIF 格式</strong>: 所有平台都支持, 透明边缘有锯齿, 微信表情包必须 GIF<br>
+    • <strong>透明背景</strong>: 自动移除接近白色的像素 (纯白底卡通图效果最好)<br>
+    • 所有处理都在你浏览器本地完成, 照片不上传任何服务器
+  </div>
 </div>
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/photopea/UPNG.js@master/UPNG.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/photopea/UPNG.js@master/pako.min.js"></script>
 <script>
-const NUM_FRAMES=6,frames=new Array(NUM_FRAMES).fill(null),grid=document.getElementById('framesGrid'),previewCanvas=document.getElementById('previewCanvas'),previewCtx=previewCanvas.getContext('2d'),outputCanvas=document.getElementById('outputCanvas'),outputCtx=outputCanvas.getContext('2d'),speedSlider=document.getElementById('speedSlider'),speedValue=document.getElementById('speedValue'),sizeSelect=document.getElementById('sizeSelect'),bgSelect=document.getElementById('bgSelect'),loopSelect=document.getElementById('loopSelect'),directionSelect=document.getElementById('directionSelect'),generateBtn=document.getElementById('generateBtn'),resetBtn=document.getElementById('resetBtn'),status=document.getElementById('status'),BG_COLORS={white:'#ffffff',pink:'#fce7f3',cream:'#fef3c7',black:'#000000'};
-function buildSlot(i){const s=document.createElement('div');s.className='frame-slot';s.dataset.i=i;renderSlot(s,i);s.addEventListener('click',(e)=>{if(e.target.classList.contains('remove')){e.stopPropagation();frames[i]=null;renderSlot(s,i);updateBtnState();return}const inp=document.createElement('input');inp.type='file';inp.accept='image/*';inp.onchange=async(ev)=>{const f=ev.target.files[0];if(!f)return;try{const b=await createImageBitmap(f);frames[i]={bitmap:b,url:URL.createObjectURL(f)};renderSlot(s,i);updateBtnState()}catch(err){status.className='status';status.textContent='无法加载: '+err.message}};inp.click()});return s}
-function renderSlot(s,i){const f=frames[i];if(f){s.classList.add('filled');s.innerHTML=`<img src="${f.url}"><span class="num">${i+1}</span><span class="remove">×</span>`}else{s.classList.remove('filled');s.innerHTML=`<span class="label">+</span><span class="num">${i+1}</span>`}}
-for(let i=0;i<NUM_FRAMES;i++)grid.appendChild(buildSlot(i));
+const NUM_FRAMES=6;
+let frames=new Array(NUM_FRAMES).fill(null);
+let currentMode='composite';
+let currentFormat='gif';
+let compositeImage=null;
+const grid=document.getElementById('framesGrid');
+const previewCanvas=document.getElementById('previewCanvas');
+const previewCtx=previewCanvas.getContext('2d');
+const outputCanvas=document.getElementById('outputCanvas');
+const outputCtx=outputCanvas.getContext('2d');
+const speedSlider=document.getElementById('speedSlider');
+const speedValue=document.getElementById('speedValue');
+const sizeSelect=document.getElementById('sizeSelect');
+const bgSelect=document.getElementById('bgSelect');
+const loopSelect=document.getElementById('loopSelect');
+const directionSelect=document.getElementById('directionSelect');
+const generateBtn=document.getElementById('generateBtn');
+const resetBtn=document.getElementById('resetBtn');
+const status=document.getElementById('status');
+const compositeUpload=document.getElementById('compositeUpload');
+const gridControls=document.getElementById('gridControls');
+const gridLayout=document.getElementById('gridLayout');
+const marginSlider=document.getElementById('marginSlider');
+const marginValue=document.getElementById('marginValue');
+const splitBtn=document.getElementById('splitBtn');
+const BG_COLORS={white:'#fff',pink:'#fce7f3',cream:'#fef3c7',black:'#000'};
+
+// Mode tabs
+document.querySelectorAll('.mode-tab').forEach(t=>{
+  t.addEventListener('click',()=>{
+    document.querySelectorAll('.mode-tab').forEach(x=>x.classList.remove('active'));
+    t.classList.add('active');
+    currentMode=t.dataset.mode;
+    document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
+    document.getElementById(currentMode+'Section').classList.add('active');
+  });
+});
+
+// Format toggle
+document.querySelectorAll('.format-btn').forEach(b=>{
+  b.addEventListener('click',()=>{
+    document.querySelectorAll('.format-btn').forEach(x=>x.classList.remove('active'));
+    b.classList.add('active');
+    currentFormat=b.dataset.format;
+    updateBtnState();
+  });
+});
+
+// Composite upload
+compositeUpload.addEventListener('click',()=>{
+  const inp=document.createElement('input');
+  inp.type='file';
+  inp.accept='image/*';
+  inp.onchange=async(ev)=>{
+    const f=ev.target.files[0];
+    if(!f)return;
+    const bitmap=await createImageBitmap(f);
+    compositeImage={bitmap,url:URL.createObjectURL(f)};
+    compositeUpload.classList.add('has-image');
+    compositeUpload.innerHTML=`<img src="${compositeImage.url}">`;
+    gridControls.classList.add('show');
+    // auto-detect layout
+    autoDetectLayout();
+  };
+  inp.click();
+});
+
+function autoDetectLayout(){
+  if(!compositeImage)return;
+  const w=compositeImage.bitmap.width, h=compositeImage.bitmap.height;
+  const ratio=w/h;
+  // 3x2 ratio ~1.5, 2x3 ratio ~0.67, 6x1 ratio ~6, 1x6 ratio ~0.17
+  let bestLayout='3x2';
+  if(ratio>3)bestLayout='6x1';
+  else if(ratio<0.4)bestLayout='1x6';
+  else if(ratio<1)bestLayout='2x3';
+  else bestLayout='3x2';
+  gridLayout.value=bestLayout;
+}
+
+marginSlider.addEventListener('input',()=>{marginValue.textContent=marginSlider.value+'%'});
+
+splitBtn.addEventListener('click',async()=>{
+  if(!compositeImage)return;
+  const layout=gridLayout.value;
+  const margin=parseInt(marginSlider.value)/100;
+  let cols=3,rows=2;
+  if(layout==='2x3'){cols=2;rows=3}
+  else if(layout==='6x1'){cols=6;rows=1}
+  else if(layout==='1x6'){cols=1;rows=6}
+  else if(layout==='3x2'){cols=3;rows=2}
+  else{ // auto - use the value already set
+    const v=gridLayout.value;
+    if(v==='2x3'){cols=2;rows=3}else if(v==='6x1'){cols=6;rows=1}else if(v==='1x6'){cols=1;rows=6}
+  }
+  const img=compositeImage.bitmap;
+  const cellW=img.width/cols;
+  const cellH=img.height/rows;
+  const mx=cellW*margin;
+  const my=cellH*margin;
+
+  for(let i=0;i<NUM_FRAMES;i++){frames[i]=null}
+  let idx=0;
+  for(let r=0;r<rows;r++){
+    for(let c=0;c<cols;c++){
+      if(idx>=NUM_FRAMES)break;
+      const sx=c*cellW+mx;
+      const sy=r*cellH+my;
+      const sw=cellW-2*mx;
+      const sh=cellH-2*my;
+      const canvas=document.createElement('canvas');
+      canvas.width=sw;canvas.height=sh;
+      const ctx=canvas.getContext('2d');
+      ctx.drawImage(img,sx,sy,sw,sh,0,0,sw,sh);
+      const blob=await new Promise(res=>canvas.toBlob(res,'image/png'));
+      const bitmap=await createImageBitmap(blob);
+      frames[idx]={bitmap,url:URL.createObjectURL(blob)};
+      idx++;
+    }
+  }
+  // switch to individual mode to show the result
+  document.querySelector('[data-mode="individual"]').click();
+  rebuildGrid();
+  updateBtnState();
+  status.className='status success';
+  status.textContent=`✓ 已切成 ${idx} 帧, 可以预览/导出`;
+});
+
+function buildSlot(i){
+  const s=document.createElement('div');
+  s.className='frame-slot';s.dataset.i=i;renderSlot(s,i);
+  s.addEventListener('click',(e)=>{
+    if(e.target.classList.contains('remove')){
+      e.stopPropagation();frames[i]=null;renderSlot(s,i);updateBtnState();return;
+    }
+    const inp=document.createElement('input');
+    inp.type='file';inp.accept='image/*';
+    inp.onchange=async(ev)=>{
+      const f=ev.target.files[0];if(!f)return;
+      const b=await createImageBitmap(f);
+      frames[i]={bitmap:b,url:URL.createObjectURL(f)};
+      renderSlot(s,i);updateBtnState();
+    };
+    inp.click();
+  });
+  return s;
+}
+function renderSlot(s,i){
+  const f=frames[i];
+  if(f){s.classList.add('filled');s.innerHTML=`<img src="${f.url}"><span class="num">${i+1}</span><span class="remove">×</span>`}
+  else{s.classList.remove('filled');s.innerHTML=`<span class="label">+</span><span class="num">${i+1}</span>`}
+}
+function rebuildGrid(){grid.innerHTML='';for(let i=0;i<NUM_FRAMES;i++)grid.appendChild(buildSlot(i))}
+rebuildGrid();
+
 function filledIndexes(){return frames.map((f,i)=>f?i:-1).filter(i=>i!==-1)}
-function updateBtnState(){const n=filledIndexes().length;generateBtn.disabled=n<2;generateBtn.textContent=n<2?`至少上传 2 帧 (当前 ${n})`:`生成并下载 GIF (${n} 帧)`;drawSizePreview()}
+function updateBtnState(){
+  const n=filledIndexes().length;
+  generateBtn.disabled=n<2;
+  const ext=currentFormat==='apng'?'PNG':'GIF';
+  generateBtn.textContent=n<2?`至少 2 帧 (当前 ${n})`:`生成并下载 ${ext} (${n} 帧)`;
+  drawSizePreview();
+}
 let previewStep=0,previewTimer=null;
-function startPreview(){if(previewTimer)clearInterval(previewTimer);previewTimer=setInterval(()=>{const seq=playSequence();if(seq.length===0){drawEmpty(previewCtx,previewCanvas);return}drawFrameTo(previewCtx,previewCanvas,seq[previewStep%seq.length]);previewStep++},parseInt(speedSlider.value))}
-function playSequence(){const f=filledIndexes();if(f.length===0)return[];const d=directionSelect.value;if(d==='reverse')return[...f].reverse();if(d==='pingpong'){if(f.length<2)return f;return f.concat([...f].slice(1,-1).reverse())}return f}
+function startPreview(){
+  if(previewTimer)clearInterval(previewTimer);
+  previewTimer=setInterval(()=>{
+    const seq=playSequence();
+    if(seq.length===0){drawEmpty(previewCtx,previewCanvas);return}
+    drawFrameTo(previewCtx,previewCanvas,seq[previewStep%seq.length]);
+    previewStep++;
+  },parseInt(speedSlider.value));
+}
+function playSequence(){
+  const f=filledIndexes();if(f.length===0)return[];
+  const d=directionSelect.value;
+  if(d==='reverse')return[...f].reverse();
+  if(d==='pingpong'){if(f.length<2)return f;return f.concat([...f].slice(1,-1).reverse())}
+  return f;
+}
 function drawEmpty(c,cv){c.fillStyle='#f5f5f5';c.fillRect(0,0,cv.width,cv.height);c.fillStyle='#bbb';c.font='14px sans-serif';c.textAlign='center';c.textBaseline='middle';c.fillText('上传照片后预览',cv.width/2,cv.height/2)}
-function paintBg(c,w,h,bg){if(bg==='transparent'){c.clearRect(0,0,w,h);const s=12;for(let y=0;y<h;y+=s)for(let x=0;x<w;x+=s){c.fillStyle=((x/s+y/s)%2)?'#e8e8e8':'#fff';c.fillRect(x,y,s,s)}}else{c.fillStyle=BG_COLORS[bg]||'#fff';c.fillRect(0,0,w,h)}}
-function drawFrameTo(c,cv,idx){if(!frames[idx]){drawEmpty(c,cv);return}paintBg(c,cv.width,cv.height,bgSelect.value);const img=frames[idx].bitmap,sz=Math.min(img.width,img.height),sx=(img.width-sz)/2,sy=(img.height-sz)/2;c.drawImage(img,sx,sy,sz,sz,0,0,cv.width,cv.height)}
-function drawSizePreview(){const s=parseInt(sizeSelect.value);outputCanvas.width=s;outputCanvas.height=s;const seq=playSequence();if(seq.length===0)drawEmpty(outputCtx,outputCanvas);else drawFrameTo(outputCtx,outputCanvas,seq[0])}
+function paintBg(c,w,h,bg){
+  if(bg==='transparent'){c.clearRect(0,0,w,h);const s=12;for(let y=0;y<h;y+=s)for(let x=0;x<w;x+=s){c.fillStyle=((x/s+y/s)%2)?'#e8e8e8':'#fff';c.fillRect(x,y,s,s)}}
+  else{c.fillStyle=BG_COLORS[bg]||'#fff';c.fillRect(0,0,w,h)}
+}
+function drawFrameTo(c,cv,idx){
+  if(!frames[idx]){drawEmpty(c,cv);return}
+  paintBg(c,cv.width,cv.height,bgSelect.value);
+  const img=frames[idx].bitmap;
+  const sz=Math.min(img.width,img.height);
+  const sx=(img.width-sz)/2;const sy=(img.height-sz)/2;
+  c.drawImage(img,sx,sy,sz,sz,0,0,cv.width,cv.height);
+}
+function drawSizePreview(){
+  const s=parseInt(sizeSelect.value);
+  outputCanvas.width=s;outputCanvas.height=s;
+  const seq=playSequence();
+  if(seq.length===0)drawEmpty(outputCtx,outputCanvas);
+  else drawFrameTo(outputCtx,outputCanvas,seq[0]);
+}
 speedSlider.addEventListener('input',()=>{speedValue.textContent=speedSlider.value+'ms/帧';startPreview()});
 bgSelect.addEventListener('change',()=>{drawSizePreview();startPreview()});
 sizeSelect.addEventListener('change',drawSizePreview);
 directionSelect.addEventListener('change',()=>{previewStep=0;drawSizePreview()});
 startPreview();drawEmpty(previewCtx,previewCanvas);drawEmpty(outputCtx,outputCanvas);
-generateBtn.addEventListener('click',async()=>{const f=filledIndexes();if(f.length<2)return;generateBtn.disabled=true;status.className='status';status.textContent='生成中... 0%';const size=parseInt(sizeSelect.value),speed=parseInt(speedSlider.value),loop=parseInt(loopSelect.value),bg=bgSelect.value,seq=playSequence(),TC=0x00ff00,gif=new GIF({workers:2,quality:8,width:size,height:size,workerScript:'https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js',transparent:bg==='transparent'?TC:null,repeat:loop===1?-1:0});
-for(const idx of seq){const c=document.createElement('canvas');c.width=size;c.height=size;const cx=c.getContext('2d');if(bg==='transparent'){cx.fillStyle='#00ff00';cx.fillRect(0,0,size,size)}else{cx.fillStyle=BG_COLORS[bg]||'#fff';cx.fillRect(0,0,size,size)}const img=frames[idx].bitmap,sq=Math.min(img.width,img.height),sx=(img.width-sq)/2,sy=(img.height-sq)/2;cx.drawImage(img,sx,sy,sq,sq,0,0,size,size);if(bg==='transparent'){const id=cx.getImageData(0,0,size,size);for(let i=0;i<id.data.length;i+=4){const r=id.data[i],g=id.data[i+1],b=id.data[i+2];if(r>235&&g>235&&b>235){id.data[i]=0;id.data[i+1]=255;id.data[i+2]=0}}cx.putImageData(id,0,0)}gif.addFrame(c,{delay:speed,copy:true})}
-gif.on('progress',(p)=>{status.textContent='生成中... '+Math.round(p*100)+'%'});
-gif.on('finished',(blob)=>{const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`emoji-${Date.now()}.gif`;a.click();const kb=Math.round(blob.size/1024);status.className='status success';status.textContent=`✓ 已下载 (${kb} KB)`;generateBtn.disabled=false;updateBtnState();setTimeout(()=>URL.revokeObjectURL(url),5000)});
-gif.render()});
-resetBtn.addEventListener('click',()=>{if(filledIndexes().length===0)return;if(!confirm('清空所有照片?'))return;for(let i=0;i<NUM_FRAMES;i++)frames[i]=null;grid.innerHTML='';for(let i=0;i<NUM_FRAMES;i++)grid.appendChild(buildSlot(i));status.textContent='';status.className='status';updateBtnState();drawEmpty(previewCtx,previewCanvas);drawEmpty(outputCtx,outputCanvas)});
+
+function renderFrameToCanvas(idx,size,bg){
+  const c=document.createElement('canvas');c.width=size;c.height=size;
+  const cx=c.getContext('2d');
+  if(bg==='transparent'){cx.clearRect(0,0,size,size)}
+  else{cx.fillStyle=BG_COLORS[bg]||'#fff';cx.fillRect(0,0,size,size)}
+  const img=frames[idx].bitmap;
+  const sq=Math.min(img.width,img.height);
+  const sx=(img.width-sq)/2;const sy=(img.height-sq)/2;
+  cx.drawImage(img,sx,sy,sq,sq,0,0,size,size);
+  if(bg==='transparent'){
+    const id=cx.getImageData(0,0,size,size);
+    for(let i=0;i<id.data.length;i+=4){
+      const r=id.data[i],g=id.data[i+1],b=id.data[i+2];
+      // soft white removal with alpha gradient
+      const minRGB=Math.min(r,g,b);
+      if(minRGB>240){id.data[i+3]=0}
+      else if(minRGB>220){id.data[i+3]=Math.floor((255-minRGB)*255/35)}
+    }
+    cx.putImageData(id,0,0);
+  }
+  return c;
+}
+
+async function generateGIF(seq,size,speed,loop,bg){
+  return new Promise((resolve)=>{
+    const gif=new GIF({workers:2,quality:8,width:size,height:size,workerScript:'https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js',transparent:bg==='transparent'?0x00ff00:null,repeat:loop===1?-1:0});
+    for(const idx of seq){
+      const c=document.createElement('canvas');c.width=size;c.height=size;
+      const cx=c.getContext('2d');
+      if(bg==='transparent'){cx.fillStyle='#00ff00';cx.fillRect(0,0,size,size)}
+      else{cx.fillStyle=BG_COLORS[bg]||'#fff';cx.fillRect(0,0,size,size)}
+      const img=frames[idx].bitmap;
+      const sq=Math.min(img.width,img.height);
+      const sx=(img.width-sq)/2;const sy=(img.height-sq)/2;
+      cx.drawImage(img,sx,sy,sq,sq,0,0,size,size);
+      if(bg==='transparent'){
+        const id=cx.getImageData(0,0,size,size);
+        for(let i=0;i<id.data.length;i+=4){
+          const r=id.data[i],g=id.data[i+1],b=id.data[i+2];
+          if(r>235&&g>235&&b>235){id.data[i]=0;id.data[i+1]=255;id.data[i+2]=0}
+        }
+        cx.putImageData(id,0,0);
+      }
+      gif.addFrame(c,{delay:speed,copy:true});
+    }
+    gif.on('progress',(p)=>{status.textContent='生成中... '+Math.round(p*100)+'%'});
+    gif.on('finished',(blob)=>resolve(blob));
+    gif.render();
+  });
+}
+
+async function generateAPNG(seq,size,speed,loop,bg){
+  const buffers=[];
+  const delays=[];
+  for(const idx of seq){
+    const c=renderFrameToCanvas(idx,size,bg);
+    const ctx=c.getContext('2d');
+    const id=ctx.getImageData(0,0,size,size);
+    buffers.push(id.data.buffer);
+    delays.push(speed);
+    status.textContent='准备帧 '+(buffers.length)+'/'+seq.length;
+  }
+  const apng=UPNG.encode(buffers,size,size,0,delays); // 0 = lossless
+  return new Blob([apng],{type:'image/png'});
+}
+
+generateBtn.addEventListener('click',async()=>{
+  const f=filledIndexes();if(f.length<2)return;
+  generateBtn.disabled=true;status.className='status';status.textContent='生成中...';
+  const size=parseInt(sizeSelect.value);
+  const speed=parseInt(speedSlider.value);
+  const loop=parseInt(loopSelect.value);
+  const bg=bgSelect.value;
+  const seq=playSequence();
+  let blob, ext;
+  try{
+    if(currentFormat==='apng'){
+      blob=await generateAPNG(seq,size,speed,loop,bg);
+      ext='png';
+    }else{
+      blob=await generateGIF(seq,size,speed,loop,bg);
+      ext='gif';
+    }
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;a.download=`emoji-${Date.now()}.${ext}`;a.click();
+    const kb=Math.round(blob.size/1024);
+    status.className='status success';
+    status.textContent=`✓ 已下载 emoji-${Date.now()}.${ext} (${kb} KB)`;
+    setTimeout(()=>URL.revokeObjectURL(url),5000);
+  }catch(err){
+    status.className='status error';
+    status.textContent='出错: '+err.message;
+  }
+  generateBtn.disabled=false;updateBtnState();
+});
+
+resetBtn.addEventListener('click',()=>{
+  if(!confirm('清空所有照片?'))return;
+  for(let i=0;i<NUM_FRAMES;i++)frames[i]=null;
+  compositeImage=null;
+  compositeUpload.classList.remove('has-image');
+  compositeUpload.innerHTML='<div class="placeholder"><strong>📤 点击上传拼合图</strong>支持 2×3、3×2、1×6、6×1 网格布局</div>';
+  gridControls.classList.remove('show');
+  rebuildGrid();
+  status.textContent='';status.className='status';
+  updateBtnState();
+  drawEmpty(previewCtx,previewCanvas);
+  drawEmpty(outputCtx,outputCanvas);
+});
+
 updateBtnState();
 </script>
 </body>
