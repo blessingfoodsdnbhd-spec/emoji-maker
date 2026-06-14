@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>表情包动画生成器</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;background:#fafafa;padding:20px;color:#333}
+  .container{max-width:720px;margin:0 auto}
+  h1{font-size:24px;margin-bottom:8px}
+  .subtitle{color:#888;margin-bottom:24px;font-size:14px}
+  .frames-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:24px}
+  @media (max-width:600px){.frames-grid{grid-template-columns:repeat(3,1fr)}}
+  .frame-slot{aspect-ratio:1;border:2px dashed #ddd;border-radius:12px;background:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;overflow:hidden;position:relative;transition:border-color .2s}
+  .frame-slot:hover{border-color:#ec4899}
+  .frame-slot.filled{border-style:solid;border-color:#ec4899}
+  .frame-slot img{width:100%;height:100%;object-fit:cover;pointer-events:none}
+  .frame-slot .label{color:#ccc;font-size:24px;font-weight:200;pointer-events:none}
+  .frame-slot .num{position:absolute;bottom:2px;left:4px;color:#999;font-size:11px;pointer-events:none;background:rgba(255,255,255,.85);padding:0 4px;border-radius:4px}
+  .frame-slot .remove{position:absolute;top:4px;right:4px;width:22px;height:22px;background:rgba(0,0,0,.6);color:#fff;border-radius:50%;font-size:14px;display:flex;align-items:center;justify-content:center;cursor:pointer;opacity:0;transition:opacity .2s;line-height:1}
+  .frame-slot.filled .remove{opacity:1}
+  .preview-section{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px}
+  @media (max-width:600px){.preview-section{grid-template-columns:1fr}}
+  .preview-box{background:#fff;border-radius:12px;padding:16px;text-align:center}
+  .preview-box h3{font-size:13px;color:#888;margin-bottom:12px;font-weight:500}
+  .preview-canvas{width:100%;max-width:280px;aspect-ratio:1;background:#f5f5f5;border-radius:8px;display:block;margin:0 auto}
+  .controls{background:#fff;border-radius:12px;padding:20px;margin-bottom:24px}
+  .control-row{display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+  .control-row:last-child{margin-bottom:0}
+  .control-row label{min-width:80px;font-size:14px;color:#555}
+  .control-row input[type=range]{flex:1;min-width:120px}
+  .control-row .value{min-width:80px;text-align:right;font-size:14px;color:#ec4899;font-weight:500}
+  select{padding:6px 10px;border:1px solid #ddd;border-radius:6px;font-size:14px;background:#fff;flex:1}
+  .btn-row{display:flex;gap:12px;flex-wrap:wrap}
+  button{padding:12px 24px;border:none;border-radius:8px;font-size:14px;font-weight:500;cursor:pointer;transition:all .2s}
+  .btn-primary{background:#ec4899;color:#fff;flex:1}
+  .btn-primary:hover{background:#db2777}
+  .btn-primary:disabled{background:#ddd;cursor:not-allowed}
+  .btn-secondary{background:#fff;color:#555;border:1px solid #ddd}
+  .btn-secondary:hover{background:#f5f5f5}
+  .status{margin-top:12px;font-size:13px;color:#888;text-align:center;min-height:18px}
+  .status.success{color:#10b981}
+  .footer-tip{margin-top:24px;padding:16px;background:#fef3c7;border-radius:8px;font-size:13px;color:#92400e;line-height:1.6}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>表情包动画生成器</h1>
+  <p class="subtitle">上传 2~6 张照片 → 自动循环生成动态 emoji (GIF 格式) — 全程本地处理,不上传任何数据</p>
+  <div class="frames-grid" id="framesGrid"></div>
+  <div class="preview-section">
+    <div class="preview-box"><h3>实时预览</h3><canvas id="previewCanvas" class="preview-canvas" width="256" height="256"></canvas></div>
+    <div class="preview-box"><h3>输出尺寸预览</h3><canvas id="outputCanvas" class="preview-canvas" width="256" height="256"></canvas></div>
+  </div>
+  <div class="controls">
+    <div class="control-row"><label>速度</label><input type="range" id="speedSlider" min="80" max="600" value="220" step="10"><span class="value" id="speedValue">220ms/帧</span></div>
+    <div class="control-row"><label>输出尺寸</label><select id="sizeSelect"><option value="128">128 × 128</option><option value="240">240 × 240 (微信表情包)</option><option value="256" selected>256 × 256 (推荐)</option><option value="320">320 × 320 (LINE 贴图)</option><option value="480">480 × 480 (高清)</option></select></div>
+    <div class="control-row"><label>背景</label><select id="bgSelect"><option value="white" selected>白色</option><option value="transparent">透明 (自动移除白底)</option><option value="pink">浅粉色</option><option value="cream">米色</option><option value="black">黑色</option></select></div>
+    <div class="control-row"><label>循环</label><select id="loopSelect"><option value="0" selected>无限循环</option><option value="3">循环 3 次</option><option value="1">播放一次</option></select></div>
+    <div class="control-row"><label>方向</label><select id="directionSelect"><option value="forward" selected>正序</option><option value="pingpong">来回 (ping-pong)</option><option value="reverse">倒序</option></select></div>
+  </div>
+  <div class="btn-row">
+    <button class="btn-primary" id="generateBtn" disabled>至少上传 2 帧</button>
+    <button class="btn-secondary" id="resetBtn">清空</button>
+  </div>
+  <div class="status" id="status"></div>
+  <div class="footer-tip">💡 <strong>小贴士:</strong> 上传连续动作照片效果最好。背景选透明会移除接近白色的像素 (纯白底照片效果好)。微信表情包 GIF 上限 1MB, 建议 240×240。所有处理都在本地浏览器完成, 照片不上传。</div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.js"></script>
+<script>
+const NUM_FRAMES=6,frames=new Array(NUM_FRAMES).fill(null),grid=document.getElementById('framesGrid'),previewCanvas=document.getElementById('previewCanvas'),previewCtx=previewCanvas.getContext('2d'),outputCanvas=document.getElementById('outputCanvas'),outputCtx=outputCanvas.getContext('2d'),speedSlider=document.getElementById('speedSlider'),speedValue=document.getElementById('speedValue'),sizeSelect=document.getElementById('sizeSelect'),bgSelect=document.getElementById('bgSelect'),loopSelect=document.getElementById('loopSelect'),directionSelect=document.getElementById('directionSelect'),generateBtn=document.getElementById('generateBtn'),resetBtn=document.getElementById('resetBtn'),status=document.getElementById('status'),BG_COLORS={white:'#ffffff',pink:'#fce7f3',cream:'#fef3c7',black:'#000000'};
+function buildSlot(i){const s=document.createElement('div');s.className='frame-slot';s.dataset.i=i;renderSlot(s,i);s.addEventListener('click',(e)=>{if(e.target.classList.contains('remove')){e.stopPropagation();frames[i]=null;renderSlot(s,i);updateBtnState();return}const inp=document.createElement('input');inp.type='file';inp.accept='image/*';inp.onchange=async(ev)=>{const f=ev.target.files[0];if(!f)return;try{const b=await createImageBitmap(f);frames[i]={bitmap:b,url:URL.createObjectURL(f)};renderSlot(s,i);updateBtnState()}catch(err){status.className='status';status.textContent='无法加载: '+err.message}};inp.click()});return s}
+function renderSlot(s,i){const f=frames[i];if(f){s.classList.add('filled');s.innerHTML=`<img src="${f.url}"><span class="num">${i+1}</span><span class="remove">×</span>`}else{s.classList.remove('filled');s.innerHTML=`<span class="label">+</span><span class="num">${i+1}</span>`}}
+for(let i=0;i<NUM_FRAMES;i++)grid.appendChild(buildSlot(i));
+function filledIndexes(){return frames.map((f,i)=>f?i:-1).filter(i=>i!==-1)}
+function updateBtnState(){const n=filledIndexes().length;generateBtn.disabled=n<2;generateBtn.textContent=n<2?`至少上传 2 帧 (当前 ${n})`:`生成并下载 GIF (${n} 帧)`;drawSizePreview()}
+let previewStep=0,previewTimer=null;
+function startPreview(){if(previewTimer)clearInterval(previewTimer);previewTimer=setInterval(()=>{const seq=playSequence();if(seq.length===0){drawEmpty(previewCtx,previewCanvas);return}drawFrameTo(previewCtx,previewCanvas,seq[previewStep%seq.length]);previewStep++},parseInt(speedSlider.value))}
+function playSequence(){const f=filledIndexes();if(f.length===0)return[];const d=directionSelect.value;if(d==='reverse')return[...f].reverse();if(d==='pingpong'){if(f.length<2)return f;return f.concat([...f].slice(1,-1).reverse())}return f}
+function drawEmpty(c,cv){c.fillStyle='#f5f5f5';c.fillRect(0,0,cv.width,cv.height);c.fillStyle='#bbb';c.font='14px sans-serif';c.textAlign='center';c.textBaseline='middle';c.fillText('上传照片后预览',cv.width/2,cv.height/2)}
+function paintBg(c,w,h,bg){if(bg==='transparent'){c.clearRect(0,0,w,h);const s=12;for(let y=0;y<h;y+=s)for(let x=0;x<w;x+=s){c.fillStyle=((x/s+y/s)%2)?'#e8e8e8':'#fff';c.fillRect(x,y,s,s)}}else{c.fillStyle=BG_COLORS[bg]||'#fff';c.fillRect(0,0,w,h)}}
+function drawFrameTo(c,cv,idx){if(!frames[idx]){drawEmpty(c,cv);return}paintBg(c,cv.width,cv.height,bgSelect.value);const img=frames[idx].bitmap,sz=Math.min(img.width,img.height),sx=(img.width-sz)/2,sy=(img.height-sz)/2;c.drawImage(img,sx,sy,sz,sz,0,0,cv.width,cv.height)}
+function drawSizePreview(){const s=parseInt(sizeSelect.value);outputCanvas.width=s;outputCanvas.height=s;const seq=playSequence();if(seq.length===0)drawEmpty(outputCtx,outputCanvas);else drawFrameTo(outputCtx,outputCanvas,seq[0])}
+speedSlider.addEventListener('input',()=>{speedValue.textContent=speedSlider.value+'ms/帧';startPreview()});
+bgSelect.addEventListener('change',()=>{drawSizePreview();startPreview()});
+sizeSelect.addEventListener('change',drawSizePreview);
+directionSelect.addEventListener('change',()=>{previewStep=0;drawSizePreview()});
+startPreview();drawEmpty(previewCtx,previewCanvas);drawEmpty(outputCtx,outputCanvas);
+generateBtn.addEventListener('click',async()=>{const f=filledIndexes();if(f.length<2)return;generateBtn.disabled=true;status.className='status';status.textContent='生成中... 0%';const size=parseInt(sizeSelect.value),speed=parseInt(speedSlider.value),loop=parseInt(loopSelect.value),bg=bgSelect.value,seq=playSequence(),TC=0x00ff00,gif=new GIF({workers:2,quality:8,width:size,height:size,workerScript:'https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js',transparent:bg==='transparent'?TC:null,repeat:loop===1?-1:0});
+for(const idx of seq){const c=document.createElement('canvas');c.width=size;c.height=size;const cx=c.getContext('2d');if(bg==='transparent'){cx.fillStyle='#00ff00';cx.fillRect(0,0,size,size)}else{cx.fillStyle=BG_COLORS[bg]||'#fff';cx.fillRect(0,0,size,size)}const img=frames[idx].bitmap,sq=Math.min(img.width,img.height),sx=(img.width-sq)/2,sy=(img.height-sq)/2;cx.drawImage(img,sx,sy,sq,sq,0,0,size,size);if(bg==='transparent'){const id=cx.getImageData(0,0,size,size);for(let i=0;i<id.data.length;i+=4){const r=id.data[i],g=id.data[i+1],b=id.data[i+2];if(r>235&&g>235&&b>235){id.data[i]=0;id.data[i+1]=255;id.data[i+2]=0}}cx.putImageData(id,0,0)}gif.addFrame(c,{delay:speed,copy:true})}
+gif.on('progress',(p)=>{status.textContent='生成中... '+Math.round(p*100)+'%'});
+gif.on('finished',(blob)=>{const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`emoji-${Date.now()}.gif`;a.click();const kb=Math.round(blob.size/1024);status.className='status success';status.textContent=`✓ 已下载 (${kb} KB)`;generateBtn.disabled=false;updateBtnState();setTimeout(()=>URL.revokeObjectURL(url),5000)});
+gif.render()});
+resetBtn.addEventListener('click',()=>{if(filledIndexes().length===0)return;if(!confirm('清空所有照片?'))return;for(let i=0;i<NUM_FRAMES;i++)frames[i]=null;grid.innerHTML='';for(let i=0;i<NUM_FRAMES;i++)grid.appendChild(buildSlot(i));status.textContent='';status.className='status';updateBtnState();drawEmpty(previewCtx,previewCanvas);drawEmpty(outputCtx,outputCanvas)});
+updateBtnState();
+</script>
+</body>
+</html>
