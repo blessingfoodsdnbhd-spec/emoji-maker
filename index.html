@@ -125,6 +125,11 @@
           <option value="no">否 (保留每帧实际大小)</option>
         </select>
       </div>
+      <div class="grid-row" id="safetyRow">
+        <label>安全留白</label>
+        <input type="range" id="safetyPad" min="0" max="30" value="15" step="1">
+        <span class="value" id="safetyPadValue">15%</span>
+      </div>
       <div class="grid-row" id="marginRow">
         <label>边缘留白</label>
         <input type="range" id="marginSlider" min="0" max="20" value="2" step="1">
@@ -214,6 +219,9 @@ const splitMode=document.getElementById('splitMode');
 const marginRow=document.getElementById('marginRow');
 const uniformSize=document.getElementById('uniformSize');
 const uniformRow=document.getElementById('uniformRow');
+const safetyPad=document.getElementById('safetyPad');
+const safetyPadValue=document.getElementById('safetyPadValue');
+const safetyRow=document.getElementById('safetyRow');
 const BG_COLORS={white:'#fff',pink:'#fce7f3',cream:'#fef3c7',black:'#000'};
 
 // --- Smart grid-boundary detection ---
@@ -267,7 +275,7 @@ function tightenBBox(data,imgW,imgH,x0,y0,bw,bh){
   const xEnd=Math.min(x0+bw,imgW),yEnd=Math.min(y0+bh,imgH);
   for(let y=y0;y<yEnd;y++){let i=(y*imgW+x0)*4;for(let x=x0;x<xEnd;x++){const r=data[i],g=data[i+1],b=data[i+2];if(r<240||g<240||b<240){has=true;if(x<minX)minX=x;if(x>maxX)maxX=x;if(y<minY)minY=y;if(y>maxY)maxY=y}i+=4}}
   if(!has)return{x:x0,y:y0,w:bw,h:bh};
-  const padX=(maxX-minX)*0.06,padY=(maxY-minY)*0.06;
+  const padX=(maxX-minX)*0.10,padY=(maxY-minY)*0.10;
   const x=Math.max(0,Math.floor(minX-padX)),y=Math.max(0,Math.floor(minY-padY));
   const xe=Math.min(imgW,Math.ceil(maxX+1+padX)),ye=Math.min(imgH,Math.ceil(maxY+1+padY));
   return{x,y,w:xe-x,h:ye-y};
@@ -295,20 +303,22 @@ function detectGridBoundaries(bitmap,cols,rows){
   }
   return boxes;
 }
-// Uniform sizing: every frame becomes the SAME square (centered on each box's
-// centroid, clamped to the image). Fixes the "one frame big, one small" jitter.
-// Target = 95th-percentile of the larger side (+10%), so a single oversized
-// emoji doesn't blow up all frames.
-function normalizeBBoxes(boxes,imgW,imgH){
+// Uniform sizing: every frame becomes the SAME square, centered on each box's
+// centroid. Fixes the "one big one small" jitter.
+//  - target = the ACTUAL max side across all boxes (NOT P95 — P95 dropped the
+//    emojis with anger marks / steam puffs, undersizing them so they got cut)
+//  - + a safety margin (default 15%)
+//  - NOT clamped to the image: a clamp shifts edge frames off-centre and crops
+//    one side. Instead the box may overflow the image, and the cropper fills the
+//    overflow with white (these AI grids are white-bg anyway).
+function normalizeBBoxes(boxes,pad){
   if(!boxes.length)return boxes;
-  const dims=boxes.map(b=>Math.max(b.w,b.h)).sort((a,b)=>a-b);
-  const p95=dims[Math.min(dims.length-1,Math.floor(dims.length*0.95))];
-  const size=Math.min(p95*1.1,imgW,imgH);
+  const maxW=Math.max(...boxes.map(b=>b.w));
+  const maxH=Math.max(...boxes.map(b=>b.h));
+  const size=Math.max(maxW,maxH)*(1+pad);
   return boxes.map(b=>{
     const cx=b.x+b.w/2,cy=b.y+b.h/2;
-    let x=cx-size/2,y=cy-size/2;
-    x=Math.max(0,Math.min(x,imgW-size));y=Math.max(0,Math.min(y,imgH-size));
-    return{x:Math.round(x),y:Math.round(y),w:Math.round(size),h:Math.round(size)};
+    return{x:Math.round(cx-size/2),y:Math.round(cy-size/2),w:Math.round(size),h:Math.round(size)};
   });
 }
 
@@ -448,8 +458,8 @@ splitBtn.addEventListener('click',async()=>{
   if(splitMode.value==='smart'){
     const boxes=detectGridBoundaries(img,cols,rows);
     cells=(uniformSize.value==='yes')
-      ? normalizeBBoxes(boxes,img.width,img.height)   // all frames same square size
-      : boxes.map(b=>squarify(b,img.width,img.height)); // keep each frame's actual size
+      ? normalizeBBoxes(boxes,parseInt(safetyPad.value)/100) // all frames same square size
+      : boxes.map(b=>squarify(b,img.width,img.height));      // keep each frame's actual size
   }else{
     cells=equalCells(img,cols,rows,parseInt(marginSlider.value)/100);
   }
@@ -458,10 +468,19 @@ splitBtn.addEventListener('click',async()=>{
   const n=Math.min(cells.length,NUM_FRAMES);
   for(let idx=0;idx<n;idx++){
     const cell=cells[idx];
+    const cw=Math.max(1,Math.round(cell.w)),ch=Math.max(1,Math.round(cell.h));
     const canvas=document.createElement('canvas');
-    canvas.width=Math.max(1,Math.round(cell.w));canvas.height=Math.max(1,Math.round(cell.h));
+    canvas.width=cw;canvas.height=ch;
     const ctx=canvas.getContext('2d');
-    ctx.drawImage(img,cell.x,cell.y,cell.w,cell.h,0,0,canvas.width,canvas.height);
+    // fill white first so any overflow past the source image stays clean (white
+    // is later removed by the transparent-bg option) — never crops the emoji
+    ctx.fillStyle='#ffffff';ctx.fillRect(0,0,cw,ch);
+    // draw only the part of the cell that overlaps the image, at 1:1 (no scaling),
+    // offset so content keeps its position inside the frame
+    const sx=Math.max(0,cell.x),sy=Math.max(0,cell.y);
+    const sx2=Math.min(img.width,cell.x+cell.w),sy2=Math.min(img.height,cell.y+cell.h);
+    const sw=sx2-sx,sh=sy2-sy;
+    if(sw>0&&sh>0)ctx.drawImage(img,sx,sy,sw,sh,sx-cell.x,sy-cell.y,sw,sh);
     const blob=await new Promise(res=>canvas.toBlob(res,'image/png'));
     const bitmap=await createImageBitmap(blob);
     frames[idx]={bitmap,url:URL.createObjectURL(blob)};
@@ -481,8 +500,11 @@ function syncSplitModeUI(){
   const smart=splitMode.value==='smart';
   marginRow.style.display=smart?'none':'';
   uniformRow.style.display=smart?'':'none';
+  safetyRow.style.display=(smart&&uniformSize.value==='yes')?'':'none';
 }
 splitMode.addEventListener('change',syncSplitModeUI);
+uniformSize.addEventListener('change',syncSplitModeUI);
+safetyPad.addEventListener('input',()=>{safetyPadValue.textContent=safetyPad.value+'%'});
 syncSplitModeUI(); // smart is default
 
 function buildSlot(i){
