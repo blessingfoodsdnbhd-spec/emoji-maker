@@ -173,8 +173,8 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
 <script src="https://cdn.jsdelivr.net/gh/photopea/UPNG.js@master/UPNG.js"></script>
-<script src="https://cdn.jsdelivr.net/gh/photopea/UPNG.js@master/pako.min.js"></script>
 <script>
 let NUM_FRAMES=24;
 let frames=new Array(NUM_FRAMES).fill(null);
@@ -617,26 +617,58 @@ async function generateAPNG(seq,size,speed,loop,bg){
 // --- Animated WebP via ffmpeg.wasm (lazy-loaded, single-thread core works on
 // GitHub Pages without COOP/COEP; all cross-origin URLs go through toBlobURL so
 // the worker isn't blocked, same fix as the gif.js worker) ---
-const FFMPEG_UMD='https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd';
-const FFMPEG_UTIL='https://unpkg.com/@ffmpeg/util@0.12.2/dist/umd/index.js';
-const FFMPEG_CORE='https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+// NOTE: we do NOT load @ffmpeg/util — its UMD build is broken for plain <script>
+// use (its factory references a bare `exports`, so it throws and never sets
+// window.FFmpegUtil → "Cannot destructure toBlobURL from null"). We only need
+// toBlobURL, which is a tiny fetch→blob helper, so we inline it below.
+// worker filename (814.ffmpeg.js) is specific to @ffmpeg/ffmpeg@0.12.10.
+const FF_CDNS=[
+  {ff:'https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd',core:'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd',worker:'814.ffmpeg.js'},
+  {ff:'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd',core:'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd',worker:'814.ffmpeg.js'}
+];
 let ffmpegInstance=null;
 function loadScript(src){return new Promise((resolve,reject)=>{const s=document.createElement('script');s.src=src;s.onload=resolve;s.onerror=()=>reject(new Error('加载失败: '+src));document.head.appendChild(s)})}
+// same-origin blob URL so cross-origin worker/core aren't blocked (mobile Safari)
+async function ffToBlobURL(url,mime){
+  const r=await fetch(url);
+  if(!r.ok)throw new Error('下载失败('+r.status+'): '+url);
+  return URL.createObjectURL(new Blob([await r.arrayBuffer()],{type:mime}));
+}
+// The core must be served as an ES MODULE: a custom classWorkerURL makes
+// @ffmpeg/ffmpeg spawn a {type:"module"} worker, which can't importScripts the
+// UMD core and falls back to `(await import(coreURL)).default`. The UMD core has
+// no default export, so we append one. (Verified in headless Chrome.)
+async function ffCoreBlobURL(url){
+  const r=await fetch(url);
+  if(!r.ok)throw new Error('下载失败('+r.status+'): '+url);
+  const text=await r.text();
+  return URL.createObjectURL(new Blob([text+'\nexport default createFFmpegCore;'],{type:'text/javascript'}));
+}
 async function getFFmpeg(){
   if(ffmpegInstance)return ffmpegInstance;
-  status.textContent='首次需下载 webp 编码器 (约 25MB)...';
-  if(!window.FFmpegWASM)await loadScript(`${FFMPEG_UMD}/ffmpeg.js`);
-  if(!window.FFmpegUtil)await loadScript(FFMPEG_UTIL);
-  const {FFmpeg}=window.FFmpegWASM;
-  const {toBlobURL}=window.FFmpegUtil;
-  const ff=new FFmpeg();
-  await ff.load({
-    classWorkerURL: await toBlobURL(`${FFMPEG_UMD}/814.ffmpeg.js`,'text/javascript'),
-    coreURL: await toBlobURL(`${FFMPEG_CORE}/ffmpeg-core.js`,'text/javascript'),
-    wasmURL: await toBlobURL(`${FFMPEG_CORE}/ffmpeg-core.wasm`,'application/wasm'),
-  });
-  ffmpegInstance=ff;
-  return ff;
+  let lastErr;
+  for(const cdn of FF_CDNS){
+    try{
+      status.textContent='加载 webp 编码器...';
+      if(!(window.FFmpegWASM&&window.FFmpegWASM.FFmpeg))await loadScript(`${cdn.ff}/ffmpeg.js`);
+      // a script that throws at runtime still fires onload, so verify the global
+      if(!(window.FFmpegWASM&&window.FFmpegWASM.FFmpeg))throw new Error('FFmpeg 全局未就绪');
+      const {FFmpeg}=window.FFmpegWASM;
+      const ff=new FFmpeg();
+      status.textContent='首次需下载核心 (约 25MB, 浏览器会缓存)...';
+      await ff.load({
+        classWorkerURL: await ffToBlobURL(`${cdn.ff}/${cdn.worker}`,'text/javascript'),
+        coreURL: await ffCoreBlobURL(`${cdn.core}/ffmpeg-core.js`),
+        wasmURL: await ffToBlobURL(`${cdn.core}/ffmpeg-core.wasm`,'application/wasm'),
+      });
+      ffmpegInstance=ff;
+      return ff;
+    }catch(e){
+      lastErr=e;
+      try{window.FFmpegWASM=undefined}catch(_){} // allow re-load from the next CDN
+    }
+  }
+  throw new Error('WebP 编码器加载失败 ('+((lastErr&&lastErr.message)||'')+'), 请试 GIF 或 APNG');
 }
 
 async function generateWebP(seq,size,speed,loop,bg){
