@@ -115,12 +115,14 @@
     <div class="control-row">
       <label>输出格式</label>
       <div class="format-toggle" style="flex:1">
-        <button class="format-btn active" data-format="gif">GIF (兼容性好)</button>
-        <button class="format-btn" data-format="apng">APNG (透明高质量)</button>
+        <button class="format-btn active" data-format="gif">GIF</button>
+        <button class="format-btn" data-format="apng">APNG (透明)</button>
+        <button class="format-btn" data-format="webp">WebP (贴纸)</button>
       </div>
     </div>
     <div class="control-row"><label>速度</label><input type="range" id="speedSlider" min="80" max="600" value="220" step="10"><span class="value" id="speedValue">220ms/帧</span></div>
-    <div class="control-row"><label>输出尺寸</label><select id="sizeSelect"><option value="128">128 × 128</option><option value="240">240 × 240 (微信)</option><option value="256" selected>256 × 256 (推荐)</option><option value="320">320 × 320 (LINE)</option><option value="480">480 × 480 (高清)</option></select></div>
+    <div class="control-row"><label>输出尺寸</label><select id="sizeSelect"><option value="128">128 × 128</option><option value="240">240 × 240 (微信)</option><option value="256" selected>256 × 256 (推荐)</option><option value="320">320 × 320 (LINE)</option><option value="480">480 × 480 (高清)</option><option value="512">512 × 512 (WhatsApp/Telegram 贴纸)</option></select></div>
+    <div class="control-row" id="webpNote" style="display:none;font-size:13px;color:#0891b2;background:#ecfeff;padding:10px 12px;border-radius:8px"><span>📦 WhatsApp/Telegram 贴纸要求 <strong>512×512</strong>、≤500KB、无限循环 — 尺寸已自动锁定。首次需下载 webp 编码器 (约 25MB), 浏览器会缓存, 下次秒开。</span></div>
     <div class="control-row"><label>背景</label><select id="bgSelect"><option value="transparent" selected>透明 (移除白底)</option><option value="white">白色</option><option value="pink">浅粉色</option><option value="cream">米色</option><option value="black">黑色</option></select></div>
     <div class="control-row"><label>循环</label><select id="loopSelect"><option value="0" selected>无限循环</option><option value="3">循环 3 次</option><option value="1">播放一次</option></select></div>
     <div class="control-row"><label>方向</label><select id="directionSelect"><option value="forward" selected>正序</option><option value="pingpong">来回 ping-pong</option><option value="reverse">倒序</option></select></div>
@@ -137,6 +139,7 @@
     • <strong>拼合图模式</strong>: 把 AI 生成的"6 表情合成图"直接拖进来, 自动切成 6 帧<br>
     • <strong>APNG 格式</strong>: 真透明背景, 卡通图边缘干净, 但文件大些, iMessage / Telegram / 现代浏览器都支持<br>
     • <strong>GIF 格式</strong>: 所有平台都支持, 透明边缘有锯齿, 微信表情包必须 GIF<br>
+    • <strong>WebP 贴纸</strong>: WhatsApp / Telegram 动态贴纸专用, 自动锁 512×512、无限循环; 首次下载编码器约 25MB (之后缓存)。WhatsApp 上限 500KB、Telegram 256KB, 超了就减帧或调慢速度<br>
     • <strong>透明背景</strong>: 自动移除接近白色的像素 (纯白底卡通图效果最好)<br>
     • 所有处理都在你浏览器本地完成, 照片不上传任何服务器
   </div>
@@ -186,11 +189,24 @@ document.querySelectorAll('.mode-tab').forEach(t=>{
 });
 
 // Format toggle
+const webpNote=document.getElementById('webpNote');
+let prevSize='256';
 document.querySelectorAll('.format-btn').forEach(b=>{
   b.addEventListener('click',()=>{
     document.querySelectorAll('.format-btn').forEach(x=>x.classList.remove('active'));
     b.classList.add('active');
+    const prev=currentFormat;
     currentFormat=b.dataset.format;
+    if(currentFormat==='webp'){
+      if(prev!=='webp')prevSize=sizeSelect.value; // remember to restore later
+      sizeSelect.value='512';
+      sizeSelect.disabled=true;
+      webpNote.style.display='';
+    }else{
+      if(sizeSelect.disabled){sizeSelect.disabled=false;sizeSelect.value=prevSize}
+      webpNote.style.display='none';
+    }
+    drawSizePreview();
     updateBtnState();
   });
 });
@@ -454,6 +470,65 @@ async function generateAPNG(seq,size,speed,loop,bg){
   return new Blob([apng],{type:'image/png'});
 }
 
+// --- Animated WebP via ffmpeg.wasm (lazy-loaded, single-thread core works on
+// GitHub Pages without COOP/COEP; all cross-origin URLs go through toBlobURL so
+// the worker isn't blocked, same fix as the gif.js worker) ---
+const FFMPEG_UMD='https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd';
+const FFMPEG_UTIL='https://unpkg.com/@ffmpeg/util@0.12.2/dist/umd/index.js';
+const FFMPEG_CORE='https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+let ffmpegInstance=null;
+function loadScript(src){return new Promise((resolve,reject)=>{const s=document.createElement('script');s.src=src;s.onload=resolve;s.onerror=()=>reject(new Error('加载失败: '+src));document.head.appendChild(s)})}
+async function getFFmpeg(){
+  if(ffmpegInstance)return ffmpegInstance;
+  status.textContent='首次需下载 webp 编码器 (约 25MB)...';
+  if(!window.FFmpegWASM)await loadScript(`${FFMPEG_UMD}/ffmpeg.js`);
+  if(!window.FFmpegUtil)await loadScript(FFMPEG_UTIL);
+  const {FFmpeg}=window.FFmpegWASM;
+  const {toBlobURL}=window.FFmpegUtil;
+  const ff=new FFmpeg();
+  await ff.load({
+    classWorkerURL: await toBlobURL(`${FFMPEG_UMD}/814.ffmpeg.js`,'text/javascript'),
+    coreURL: await toBlobURL(`${FFMPEG_CORE}/ffmpeg-core.js`,'text/javascript'),
+    wasmURL: await toBlobURL(`${FFMPEG_CORE}/ffmpeg-core.wasm`,'application/wasm'),
+  });
+  ffmpegInstance=ff;
+  return ff;
+}
+
+async function generateWebP(seq,size,speed,loop,bg){
+  const ffmpeg=await getFFmpeg();
+  // write each frame as a PNG into the wasm FS
+  const names=[];
+  for(let i=0;i<seq.length;i++){
+    status.textContent=`编码帧 ${i+1}/${seq.length}...`;
+    const c=renderFrameToCanvas(seq[i],size,bg);
+    const fb=await new Promise(res=>c.toBlob(res,'image/png'));
+    const buf=new Uint8Array(await fb.arrayBuffer());
+    const name=`frame${String(i).padStart(3,'0')}.png`;
+    await ffmpeg.writeFile(name,buf);
+    names.push(name);
+  }
+  status.textContent='合成动画 WebP...';
+  let fps=Math.round(1000/speed);
+  if(fps>30)fps=30;          // WhatsApp 上限 30fps
+  if(fps<1)fps=1;
+  const loopArg=loop===1?'1':'0'; // 0 = 无限循环 (libwebp)
+  await ffmpeg.exec([
+    '-framerate',String(fps),
+    '-i','frame%03d.png',
+    '-vf',`scale=${size}:${size}:flags=lanczos`,
+    '-loop',loopArg,
+    '-lossless','0',
+    '-quality','80',
+    '-an',
+    'out.webp'
+  ]);
+  const data=await ffmpeg.readFile('out.webp');
+  // cleanup FS
+  try{for(const n of names)await ffmpeg.deleteFile(n);await ffmpeg.deleteFile('out.webp')}catch(e){}
+  return new Blob([data.buffer],{type:'image/webp'});
+}
+
 generateBtn.addEventListener('click',async()=>{
   const f=filledIndexes();if(f.length<2)return;
   generateBtn.disabled=true;status.className='status';status.textContent='生成中...';
@@ -467,6 +542,9 @@ generateBtn.addEventListener('click',async()=>{
     if(currentFormat==='apng'){
       blob=await generateAPNG(seq,size,speed,loop,bg);
       ext='png';
+    }else if(currentFormat==='webp'){
+      blob=await generateWebP(seq,size,speed,loop,bg);
+      ext='webp';
     }else{
       blob=await generateGIF(seq,size,speed,loop,bg);
       ext='gif';
@@ -476,7 +554,9 @@ generateBtn.addEventListener('click',async()=>{
     a.href=url;a.download=`emoji-${Date.now()}.${ext}`;a.click();
     const kb=Math.round(blob.size/1024);
     status.className='status success';
-    status.textContent=`✓ 已下载 emoji-${Date.now()}.${ext} (${kb} KB)`;
+    let msg=`✓ 已下载 emoji-${Date.now()}.${ext} (${kb} KB)`;
+    if(currentFormat==='webp'&&kb>500)msg+=` ⚠️ 超过 WhatsApp 500KB 上限, 试试减少帧数或调慢速度`;
+    status.textContent=msg;
     setTimeout(()=>URL.revokeObjectURL(url),5000);
   }catch(err){
     status.className='status error';
